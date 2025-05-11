@@ -1,0 +1,241 @@
+package logs
+
+import (
+	"fmt"
+	"io"
+	"log"
+	"os"
+	"runtime"
+	"strings"
+	"sync"
+
+	"gopkg.in/natefinch/lumberjack.v2"
+)
+
+type LogConf struct {
+	Mode       string `yaml:"mode"`        // 日志输出模式：console/file
+	Encoding   string `yaml:"encoding"`    // 日志编码：plain/json
+	Path       string `yaml:"path"`        // 日志文件路径（仅在文件模式下使用）
+	MaxSize    int    `yaml:"max_size"`    // 日志文件最大大小（MB）
+	MaxBackups int    `yaml:"max_backups"` // 日志文件最大保留数量
+	KeepDays   int    `yaml:"keep_days"`   // 日志文件保留天数（仅在文件模式下使用）
+	Compress   bool   `yaml:"compress"`    // 是否压缩日志文件（仅在文件模式下使用）
+}
+
+// 全局LogConf变量
+var (
+	LogConfig LogConf
+)
+
+// 定义多个日志器
+var (
+	infoLogger  *log.Logger
+	warnLogger  *log.Logger
+	errorLogger *log.Logger
+	fatalLogger *log.Logger
+	panicLogger *log.Logger
+
+	logOutput io.Writer = os.Stdout // 默认输出到控制台
+	mu        sync.Mutex
+)
+
+// InitLogger 初始化日志记录器
+// 可以根据需要调整日志级别和输出位置
+func initLoggers(output io.Writer) {
+	flags := log.LUTC | log.Ldate | log.Ltime | log.Lmsgprefix
+
+	infoLogger = log.New(output, "[INFO] ", flags)
+	warnLogger = log.New(output, "[WARN] ", flags)
+	errorLogger = log.New(output, "[ERROR] ", flags)
+	fatalLogger = log.New(os.Stderr, "[FATAL] ", flags)
+	panicLogger = log.New(os.Stderr, "[PANIC] ", flags)
+}
+
+// InitFileLog 初始化日志文件输出（可选）
+func InitFileLog(logFilePath string) {
+	mu.Lock()
+	defer mu.Unlock()
+
+	// 打开或创建日志文件
+	logFile, err := os.OpenFile(logFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Fatalf("Failed to open log file: %v", err)
+	}
+
+	// 设置多路输出：控制台 + 文件
+	multiWriter := io.MultiWriter(os.Stdout, logFile)
+
+	// 更新全局输出
+	logOutput = multiWriter
+
+	// 重新初始化所有日志器
+	initLoggers(multiWriter)
+}
+
+// 设置方法 -----------------------------------------------------------------------
+
+// SetOutput 设置日志输出位置（可选）
+func SetOutput(writer io.Writer) {
+	// 碰到当前的Mode
+	if LogConfig.Mode == "file" {
+		// 如果是文件输出，需要更新所有日志器
+		if _, ok := writer.(*os.File); ok {
+			// 如果是文件输出，需要更新所有日志器
+			mu.Lock()
+			defer mu.Unlock()
+			initLoggers(writer)
+			return
+		}
+	} else if LogConfig.Mode == "console" {
+		// 如果是控制台输出，只需要更新全局输出
+		logOutput = writer
+		return
+	}
+}
+
+// 设置日志文件最大大小（可选）
+func SetMaxSize(maxSize int) {
+	// 使用标准库的 os.File 来实现
+	logFilePath := LogConfig.Path
+	if logFilePath == "" {
+		log.Fatal("Log file path is not set")
+	}
+
+	// 打开日志文件
+	logFile, err := os.OpenFile(logFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Fatalf("Failed to open log file: %v", err)
+	}
+	defer logFile.Close()
+
+	// …………
+}
+
+// 设置日志文件最大保留天数（可选）
+func SetMaxAge(maxAge int) {
+
+}
+
+// 设置日志文件最大保留数量（可选）
+func SetMaxBackups(maxBackups int) {
+
+}
+
+// SetUp 初始化日志记录器
+func SetUp(logConf LogConf) {
+	mu.Lock()
+	defer mu.Unlock()
+
+	LogConfig = logConf
+
+	var writer io.Writer = os.Stdout
+
+	switch LogConfig.Mode {
+	case "file", "both":
+		if LogConfig.Path == "" {
+			log.Fatal("log path is required when mode is 'file' or 'both'")
+		}
+
+		lj := &lumberjack.Logger{
+			Filename:   logConf.Path,
+			MaxSize:    logConf.MaxSize,
+			MaxBackups: logConf.MaxBackups,
+			MaxAge:     logConf.KeepDays, // 使用 KeepDays 映射到 MaxAge
+			Compress:   logConf.Compress,
+		}
+
+		if LogConfig.Mode == "file" {
+			writer = lj
+		} else {
+			writer = io.MultiWriter(os.Stdout, lj)
+		}
+
+	default:
+		writer = os.Stdout
+	}
+
+	initLoggers(writer)
+}
+
+// --------------------------------------------------------------------------------
+// GetRelativePath 获取调用者的相对路径和行号
+func GetRelativePath() (file string, line int) {
+	_, filepath, line, _ := runtime.Caller(0)
+	i := strings.Index(filepath, "/server/")
+	if i != -1 {
+		filepath = "/" + filepath[i+len("/server/"):] // 加1是为了跳过"/"
+	} else {
+		filepath = "" // 或者其他默认值/错误处理
+	}
+	return filepath, line
+}
+
+func GetLogPrefix(skip int) (logPrefix string) {
+	_, filepath, line, _ := runtime.Caller(skip)
+	i := strings.Index(filepath, "/server/")
+	if i != -1 {
+		filepath = "/" + filepath[i+len("/server/"):]
+	} else {
+		filepath = "" // 或者其他默认值/错误处理
+	}
+	return fmt.Sprintf("%s %d: ", filepath, line)
+}
+
+// Info 输出 INFO 日志
+func Info(v ...interface{}) {
+	msg := GetLogPrefix(2) + fmt.Sprint(v...)
+	infoLogger.Output(2, msg)
+}
+
+func Infof(format string, v ...interface{}) {
+	msg := GetLogPrefix(2) + fmt.Sprintf(format, v...)
+	infoLogger.Output(2, msg)
+}
+
+// Warn 输出 WARN 日志
+func Warn(v ...interface{}) {
+	msg := GetLogPrefix(2) + fmt.Sprint(v...)
+	warnLogger.Output(2, msg)
+}
+
+func Warnf(format string, v ...interface{}) {
+	msg := GetLogPrefix(2) + fmt.Sprintf(format, v...)
+	warnLogger.Output(2, msg)
+}
+
+// Error 输出 ERROR 日志
+func Error(v ...interface{}) {
+	msg := GetLogPrefix(2) + fmt.Sprint(v...)
+	errorLogger.Output(2, msg)
+}
+
+func Errorf(format string, v ...interface{}) {
+	msg := GetLogPrefix(2) + fmt.Sprintf(format, v...)
+	errorLogger.Output(2, msg)
+}
+
+// Fatal 输出 FATAL 日志并退出程序
+func Fatal(v ...interface{}) {
+	msg := GetLogPrefix(2) + fmt.Sprint(v...)
+	fatalLogger.Output(2, msg)
+	os.Exit(1)
+}
+
+func Fatalf(format string, v ...interface{}) {
+	msg := GetLogPrefix(2) + fmt.Sprintf(format, v...)
+	fatalLogger.Output(2, msg)
+	os.Exit(1)
+}
+
+// Panic 输出 PANIC 日志并触发 panic
+func Panic(v ...interface{}) {
+	msg := GetLogPrefix(2) + fmt.Sprint(v...)
+	panicLogger.Output(2, msg)
+	panic(fmt.Sprint(v...))
+}
+
+func Panicf(format string, v ...interface{}) {
+	msg := GetLogPrefix(2) + fmt.Sprintf(format, v...)
+	panicLogger.Output(2, msg)
+	panic(fmt.Sprintf(format, v...))
+}

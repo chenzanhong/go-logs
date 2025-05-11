@@ -1,0 +1,6 @@
+/logs/log.go 69 : 2025/04/26 11:54:42 log.go:71: This is a test log message.
+2025/05/11 07:02:55 D:/项目/server_monitor/Platform/backend/server/logs/log.go:35: [Info] [数据库查询公司失败]
+2025/05/11 07:03:50 D:/项目/server_monitor/Platform/backend/server/logs/log.go:35: [Info] [数据库查询公司失败]
+2025/05/11 07:04:06 D:/项目/server_monitor/Platform/backend/server/logs/log.go:35: [Info] [数据库查询公司失败]
+2025/05/11 07:06:18 Info /logs/log.go 35 : [数据库查询公司失败]
+2025/05/11 07:08:13 [Info] /logs/log.go 35: [数据库查询公司失败]
