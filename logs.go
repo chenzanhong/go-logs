@@ -22,18 +22,42 @@ type LogConf struct {
 	Compress   bool   `yaml:"compress"`    // 是否压缩日志文件（仅在文件模式下使用）
 }
 
-// 全局LogConf变量
-var (
-	LogConfig LogConf
+type LogLevel int
+
+const (
+	LogLevelDebug LogLevel = iota
+	LogLevelInfo
+	LogLevelWarn
+	LogLevelError
 )
 
-// 定义多个日志器
+const (
+	Ldate          = log.Ldate                                                      // 添加日期到输出
+	Ltime          = log.Ltime                                                      // 添加时间到输出
+	Lmicroseconds  = log.Lmicroseconds                                              // 添加微秒到输出（覆盖 Ltime）
+	Llongfile      = log.Llongfile                                                  // 使用完整文件路径和行号
+	Lshortfile     = log.Lshortfile                                                 // 使用短文件路径和行号（与 Llongfile 互斥）
+	LUTC           = log.LUTC                                                       // 使用 UTC 时间格式
+	Lmsgprefix     = log.Lmsgprefix                                                 // 将日志前缀放在每行日志的开头
+	LstdFlags      = log.LstdFlags                                                  // 等价于 Ldate | Ltime
+	LogFlagsCommon = Ldate | Ltime | Lmicroseconds | LUTC | Lmsgprefix | Lshortfile // 示例：一个常见的标志组合
+)
+
+// 全局变量
 var (
+	LogConfig LogConf
+
+	// 日志器
+	debugLogger *log.Logger
 	infoLogger  *log.Logger
 	warnLogger  *log.Logger
 	errorLogger *log.Logger
 	fatalLogger *log.Logger
 	panicLogger *log.Logger
+
+	fileLogger *lumberjack.Logger
+
+	LogFlags = LogFlagsCommon
 
 	logOutput io.Writer = os.Stdout // 默认输出到控制台
 	mu        sync.Mutex
@@ -42,13 +66,13 @@ var (
 // InitLogger 初始化日志记录器
 // 可以根据需要调整日志级别和输出位置
 func initLoggers(output io.Writer) {
-	flags := log.LUTC | log.Ldate | log.Ltime | log.Lmsgprefix
 
-	infoLogger = log.New(output, "[INFO] ", flags)
-	warnLogger = log.New(output, "[WARN] ", flags)
-	errorLogger = log.New(output, "[ERROR] ", flags)
-	fatalLogger = log.New(os.Stderr, "[FATAL] ", flags)
-	panicLogger = log.New(os.Stderr, "[PANIC] ", flags)
+	debugLogger = log.New(output, "[DEBUG]", LogFlags)
+	infoLogger = log.New(output, "[INFO] ", LogFlags)
+	warnLogger = log.New(output, "[WARN] ", LogFlags)
+	errorLogger = log.New(output, "[ERROR] ", LogFlags)
+	fatalLogger = log.New(os.Stderr, "[FATAL] ", LogFlags)
+	panicLogger = log.New(os.Stderr, "[PANIC] ", LogFlags)
 }
 
 // InitFileLog 初始化日志文件输出（可选）
@@ -56,71 +80,27 @@ func InitFileLog(logFilePath string) {
 	mu.Lock()
 	defer mu.Unlock()
 
-	// 打开或创建日志文件
-	logFile, err := os.OpenFile(logFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		log.Fatalf("Failed to open log file: %v", err)
+	if fileLogger == nil {
+		fileLogger = &lumberjack.Logger{}
+	}
+	fileLogger.Filename = logFilePath
+	fileLogger.MaxSize = LogConfig.MaxSize
+	fileLogger.MaxBackups = LogConfig.MaxBackups
+	fileLogger.MaxAge = LogConfig.KeepDays
+	fileLogger.Compress = LogConfig.Compress
+
+	logOutput = fileLogger
+
+	if LogConfig.Mode == "both" {
+		// 设置多路输出：控制台 + 文件
+		logOutput = io.MultiWriter(os.Stdout, fileLogger)
 	}
 
-	// 设置多路输出：控制台 + 文件
-	multiWriter := io.MultiWriter(os.Stdout, logFile)
-
-	// 更新全局输出
-	logOutput = multiWriter
-
 	// 重新初始化所有日志器
-	initLoggers(multiWriter)
+	initLoggers(logOutput)
 }
 
 // 设置方法 -----------------------------------------------------------------------
-
-// SetOutput 设置日志输出位置（可选）
-func SetOutput(writer io.Writer) {
-	// 碰到当前的Mode
-	if LogConfig.Mode == "file" {
-		// 如果是文件输出，需要更新所有日志器
-		if _, ok := writer.(*os.File); ok {
-			// 如果是文件输出，需要更新所有日志器
-			mu.Lock()
-			defer mu.Unlock()
-			initLoggers(writer)
-			return
-		}
-	} else if LogConfig.Mode == "console" {
-		// 如果是控制台输出，只需要更新全局输出
-		logOutput = writer
-		return
-	}
-}
-
-// 设置日志文件最大大小（可选）
-func SetMaxSize(maxSize int) {
-	// 使用标准库的 os.File 来实现
-	logFilePath := LogConfig.Path
-	if logFilePath == "" {
-		log.Fatal("Log file path is not set")
-	}
-
-	// 打开日志文件
-	logFile, err := os.OpenFile(logFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		log.Fatalf("Failed to open log file: %v", err)
-	}
-	defer logFile.Close()
-
-	// …………
-}
-
-// 设置日志文件最大保留天数（可选）
-func SetMaxAge(maxAge int) {
-
-}
-
-// 设置日志文件最大保留数量（可选）
-func SetMaxBackups(maxBackups int) {
-
-}
-
 // SetUp 初始化日志记录器
 func SetUp(logConf LogConf) {
 	mu.Lock()
@@ -128,33 +108,85 @@ func SetUp(logConf LogConf) {
 
 	LogConfig = logConf
 
-	var writer io.Writer = os.Stdout
-
 	switch LogConfig.Mode {
 	case "file", "both":
 		if LogConfig.Path == "" {
 			log.Fatal("log path is required when mode is 'file' or 'both'")
 		}
-
-		lj := &lumberjack.Logger{
-			Filename:   logConf.Path,
-			MaxSize:    logConf.MaxSize,
-			MaxBackups: logConf.MaxBackups,
-			MaxAge:     logConf.KeepDays, // 使用 KeepDays 映射到 MaxAge
-			Compress:   logConf.Compress,
-		}
-
-		if LogConfig.Mode == "file" {
-			writer = lj
-		} else {
-			writer = io.MultiWriter(os.Stdout, lj)
-		}
-
+		InitFileLog(LogConfig.Path)
 	default:
-		writer = os.Stdout
+		initLoggers(os.Stdout)
+	}
+}
+
+// SetOutput 设置日志输出位置（可选）
+func SetOutput(writer io.Writer) {
+	mu.Lock()
+	defer mu.Unlock()
+
+	if writer == nil {
+		log.Fatal("writer cannot be nil")
 	}
 
-	initLoggers(writer)
+	// 判断当前的Mode
+	if LogConfig.Mode == "file" || LogConfig.Mode == "both" {
+		// 如果是文件输出，需要更新所有日志器
+		if _, ok := writer.(*os.File); ok {
+			// 如果是文件输出，需要更新所有日志器
+			initLoggers(writer)
+		}
+	} else if LogConfig.Mode == "console" {
+		// 如果是控制台输出，只需要更新全局输出
+		logOutput = writer
+		initLoggers(writer)
+	} else {
+		log.Fatal("unsupported log mode")
+	}
+}
+
+// 设置日志文件最大大小（可选）
+func SetMaxSize(maxSize int) {
+	mu.Lock()
+	defer mu.Unlock()
+	LogConfig.MaxSize = maxSize
+
+	// 重新初始化日志器以应用新设置
+	if LogConfig.Mode == "file" || LogConfig.Mode == "both" {
+		InitFileLog(LogConfig.Path)
+	}
+}
+
+// 设置日志文件最大保留天数（可选）
+func SetMaxAge(maxAge int) {
+	mu.Lock()
+	defer mu.Unlock()
+	LogConfig.KeepDays = maxAge
+
+	// 重新初始化日志器以应用新设置
+	if LogConfig.Mode == "file" || LogConfig.Mode == "both" {
+		InitFileLog(LogConfig.Path)
+	}
+}
+
+// 设置日志文件最大保留数量（可选）
+func SetMaxBackups(maxBackups int) {
+	mu.Lock()
+	defer mu.Unlock()
+	LogConfig.MaxBackups = maxBackups
+
+	if LogConfig.Mode == "file" || LogConfig.Mode == "both" {
+		InitFileLog(LogConfig.Path)
+	}
+}
+
+// 设置标志
+func SetFlags(flags int) {
+	mu.Lock()
+	defer mu.Unlock()
+
+	LogFlags = flags
+
+	initLoggers(logOutput)
 }
 
 // --------------------------------------------------------------------------------
@@ -171,7 +203,7 @@ func GetRelativePath() (file string, line int) {
 }
 
 func GetLogPrefix(skip int) (logPrefix string) {
-	_, filepath, line, _ := runtime.Caller(skip)
+	_, filepath, line, _ := runtime.Caller(skip) // 一般为2
 	i := strings.Index(filepath, "/server/")
 	if i != -1 {
 		filepath = "/" + filepath[i+len("/server/"):]
@@ -238,4 +270,9 @@ func Panicf(format string, v ...interface{}) {
 	msg := GetLogPrefix(2) + fmt.Sprintf(format, v...)
 	panicLogger.Output(2, msg)
 	panic(fmt.Sprintf(format, v...))
+}
+
+func Debug(v ...interface{}) {
+	msg := GetLogPrefix(2) + fmt.Sprint(v...)
+	debugLogger.Output(2, msg)
 }
