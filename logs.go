@@ -212,9 +212,9 @@ func SetFlags(flags int) {
 // GetRelativePath 获取调用者的相对路径和行号
 func GetRelativePath() (file string, line int) {
 	_, filepath, line, _ := runtime.Caller(0)
-	i := strings.Index(filepath, "/server/")
+	i := strings.Index(filepath, "/logs/")
 	if i != -1 {
-		filepath = "/" + filepath[i+len("/server/"):] // 加1是为了跳过"/"
+		filepath = "/" + filepath[i+len("/logs/"):] // 加1是为了跳过"/"
 	} else {
 		filepath = "" // 或者其他默认值/错误处理
 	}
@@ -223,9 +223,9 @@ func GetRelativePath() (file string, line int) {
 
 func GetLogPrefix(skip int) (logPrefix string) {
 	_, filepath, line, _ := runtime.Caller(skip) // 一般为2
-	i := strings.Index(filepath, "/server/")
+	i := strings.Index(filepath, "/logs/")
 	if i != -1 {
-		filepath = "/" + filepath[i+len("/server/"):]
+		filepath = "/" + filepath[i+len("/logs/"):]
 	} else {
 		filepath = "" // 或者其他默认值/错误处理
 	}
