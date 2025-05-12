@@ -45,7 +45,7 @@ const (
 
 // 全局变量
 var (
-	LogConfig LogConf
+	logConfig LogConf
 
 	// 日志器
 	debugLogger *log.Logger
@@ -57,7 +57,7 @@ var (
 
 	fileLogger *lumberjack.Logger
 
-	LogFlags = LogFlagsCommon
+	logFlags = LogFlagsCommon
 
 	logOutput io.Writer = os.Stdout // 默认输出到控制台
 	mu        sync.Mutex
@@ -67,16 +67,16 @@ var (
 // 可以根据需要调整日志级别和输出位置
 func initLoggers(output io.Writer) {
 
-	debugLogger = log.New(output, "[DEBUG]", LogFlags)
-	infoLogger = log.New(output, "[INFO] ", LogFlags)
-	warnLogger = log.New(output, "[WARN] ", LogFlags)
-	errorLogger = log.New(output, "[ERROR] ", LogFlags)
-	fatalLogger = log.New(os.Stderr, "[FATAL] ", LogFlags)
-	panicLogger = log.New(os.Stderr, "[PANIC] ", LogFlags)
+	debugLogger = log.New(output, "[DEBUG]", logFlags)
+	infoLogger = log.New(output, "[INFO] ", logFlags)
+	warnLogger = log.New(output, "[WARN] ", logFlags)
+	errorLogger = log.New(output, "[ERROR] ", logFlags)
+	fatalLogger = log.New(os.Stderr, "[FATAL] ", logFlags)
+	panicLogger = log.New(os.Stderr, "[PANIC] ", logFlags)
 }
 
-// InitFileLog 初始化日志文件输出（可选）
-func InitFileLog(logFilePath string) {
+// initFileLog 初始化日志文件输出（可选）
+func initFileLog(logFilePath string) {
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -84,14 +84,14 @@ func InitFileLog(logFilePath string) {
 		fileLogger = &lumberjack.Logger{}
 	}
 	fileLogger.Filename = logFilePath
-	fileLogger.MaxSize = LogConfig.MaxSize
-	fileLogger.MaxBackups = LogConfig.MaxBackups
-	fileLogger.MaxAge = LogConfig.KeepDays
-	fileLogger.Compress = LogConfig.Compress
+	fileLogger.MaxSize = logConfig.MaxSize
+	fileLogger.MaxBackups = logConfig.MaxBackups
+	fileLogger.MaxAge = logConfig.KeepDays
+	fileLogger.Compress = logConfig.Compress
 
 	logOutput = fileLogger
 
-	if LogConfig.Mode == "both" {
+	if logConfig.Mode == "both" {
 		// 设置多路输出：控制台 + 文件
 		logOutput = io.MultiWriter(os.Stdout, fileLogger)
 	}
@@ -100,23 +100,42 @@ func InitFileLog(logFilePath string) {
 	initLoggers(logOutput)
 }
 
+// DefaultLogConf 返回一个带有默认配置的 LogConf 实例
+func DefaultLogConf() LogConf {
+	return LogConf{
+		Mode:       "console", // 默认输出到控制台
+		Encoding:   "plain",   // 默认编码为 plain text
+		Path:       "",        // 控制台模式下不需要路径
+		MaxSize:    10,        // 每个日志文件最大 10MB（仅当 Mode 为 file 或 both 时有效）
+		MaxBackups: 3,         // 最多保留 3 个备份（仅当 Mode 为 file 或 both 时有效）
+		KeepDays:   7,         // 日志文件保留 7 天（仅当 Mode 为 file 或 both 时有效）
+		Compress:   false,     // 压缩旧的日志文件（仅当 Mode 为 file 或 both 时有效）
+	}
+}
+
 // 设置方法 -----------------------------------------------------------------------
 // SetUp 初始化日志记录器
 func SetUp(logConf LogConf) {
 	mu.Lock()
 	defer mu.Unlock()
 
-	LogConfig = logConf
+	logConfig = logConf
 
-	switch LogConfig.Mode {
+	switch logConfig.Mode {
 	case "file", "both":
-		if LogConfig.Path == "" {
+		if logConfig.Path == "" {
 			log.Fatal("log path is required when mode is 'file' or 'both'")
 		}
-		InitFileLog(LogConfig.Path)
+		initFileLog(logConfig.Path)
 	default:
 		initLoggers(os.Stdout)
 	}
+}
+
+// SetupDefault 使用默认配置初始化日志记录器
+func SetupDefault() {
+	defaultConfig := DefaultLogConf()
+	SetUp(defaultConfig)
 }
 
 // SetOutput 设置日志输出位置（可选）
@@ -129,13 +148,13 @@ func SetOutput(writer io.Writer) {
 	}
 
 	// 判断当前的Mode
-	if LogConfig.Mode == "file" || LogConfig.Mode == "both" {
+	if logConfig.Mode == "file" || logConfig.Mode == "both" {
 		// 如果是文件输出，需要更新所有日志器
 		if _, ok := writer.(*os.File); ok {
 			// 如果是文件输出，需要更新所有日志器
 			initLoggers(writer)
 		}
-	} else if LogConfig.Mode == "console" {
+	} else if logConfig.Mode == "console" {
 		// 如果是控制台输出，只需要更新全局输出
 		logOutput = writer
 		initLoggers(writer)
@@ -148,11 +167,11 @@ func SetOutput(writer io.Writer) {
 func SetMaxSize(maxSize int) {
 	mu.Lock()
 	defer mu.Unlock()
-	LogConfig.MaxSize = maxSize
+	logConfig.MaxSize = maxSize
 
 	// 重新初始化日志器以应用新设置
-	if LogConfig.Mode == "file" || LogConfig.Mode == "both" {
-		InitFileLog(LogConfig.Path)
+	if logConfig.Mode == "file" || logConfig.Mode == "both" {
+		initFileLog(logConfig.Path)
 	}
 }
 
@@ -160,11 +179,11 @@ func SetMaxSize(maxSize int) {
 func SetMaxAge(maxAge int) {
 	mu.Lock()
 	defer mu.Unlock()
-	LogConfig.KeepDays = maxAge
+	logConfig.KeepDays = maxAge
 
 	// 重新初始化日志器以应用新设置
-	if LogConfig.Mode == "file" || LogConfig.Mode == "both" {
-		InitFileLog(LogConfig.Path)
+	if logConfig.Mode == "file" || logConfig.Mode == "both" {
+		initFileLog(logConfig.Path)
 	}
 }
 
@@ -172,10 +191,10 @@ func SetMaxAge(maxAge int) {
 func SetMaxBackups(maxBackups int) {
 	mu.Lock()
 	defer mu.Unlock()
-	LogConfig.MaxBackups = maxBackups
+	logConfig.MaxBackups = maxBackups
 
-	if LogConfig.Mode == "file" || LogConfig.Mode == "both" {
-		InitFileLog(LogConfig.Path)
+	if logConfig.Mode == "file" || logConfig.Mode == "both" {
+		initFileLog(logConfig.Path)
 	}
 }
 
@@ -184,7 +203,7 @@ func SetFlags(flags int) {
 	mu.Lock()
 	defer mu.Unlock()
 
-	LogFlags = flags
+	logFlags = flags
 
 	initLoggers(logOutput)
 }
