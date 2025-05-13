@@ -1,8 +1,12 @@
-logs/
-├── logger.go            // 主入口
-├── encoder.go           // PlainEncoder / JsonEncoder
-├── flags.go             // SetFlags 相关
-├── config.go            // LogConf / SetUp / DefaultLogConf
-├── output.go            // outputLog / outputLogf
-├── path.go              // GetRelativePath / findProjectRoot
-└── levels.go            // LogLevel / SetLogLevel （新增）
+
+
+### 文件说明
+
+- **config.go**：包含日志配置的结构体、日志级别的定义以及相关常量，用于配置日志的行为和属性。
+  
+- **encoder.go**：定义日志编码器的接口及其实现，包括纯文本编码器和 JSON 编码器，以支持不同格式的日志输出。
+
+- **setup.go**：包含初始化日志记录器、设置日志级别和编码器的函数，负责准备和配置日志系统。
+
+- **output.go**：实现针对文件和多写入器的日志初始化逻辑，支持同时输出日志到控制台和文件。
+

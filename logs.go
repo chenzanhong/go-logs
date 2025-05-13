@@ -27,6 +27,17 @@ package logs
 
 // type LogLevel int
 
+// type LogsLogger struct { // 包含所有日志器的结构体
+// 	debugL *log.Logger 
+// 	infoL  *log.Logger
+// 	warnL  *log.Logger
+// 	errorL *log.Logger
+// 	fatalL *log.Logger
+// 	panicL *log.Logger
+
+// 	hasRootFilePrefix bool // 是否打印自定义的相对路径前缀
+// }
+
 // type Encoder interface {
 // 	Encode(v ...interface{}) string
 // }
@@ -555,4 +566,187 @@ package logs
 
 // func Debugf(format string, v ...interface{}) {
 // 	outputLogf(debugLogger, 3, format, v...)
+// }
+
+
+// // LogsLogger 的 output 方法
+// func (l *LogsLogger) Debug(v ...interface{}) {
+// 	outputLog(l.debugL, l.hasRootFilePrefix, 3, v...)
+// }
+// func (l *LogsLogger) Debugf(format string, v ...interface{}) {
+// 	outputLogf(l.debugL, l.hasRootFilePrefix, 3, format, v...)
+// }
+
+// func (l *LogsLogger) Info(v ...interface{}) {
+// 	outputLog(l.infoL, l.hasRootFilePrefix, 3, v...)
+// }
+// func (l *LogsLogger) Infof(format string, v ...interface{}) {
+// 	outputLogf(l.infoL, l.hasRootFilePrefix, 3, format, v...)
+// }
+
+// func (l *LogsLogger) Warn(v ...interface{}) {
+// 	outputLog(l.warnL, l.hasRootFilePrefix, 3, v...)
+// }
+// func (l *LogsLogger) Warnf(format string, v ...interface{}) {
+// 	outputLogf(l.warnL, l.hasRootFilePrefix, 3, format, v...)
+// }
+
+// func (l *LogsLogger) Error(v ...interface{}) {
+// 	outputLog(l.errorL, l.hasRootFilePrefix, 3, v...)
+// }
+// func (l *LogsLogger) Errorf(format string, v ...interface{}) {
+// 	outputLogf(l.errorL, l.hasRootFilePrefix, 3, format, v...)
+// }
+
+// func (l *LogsLogger) Fatal(v ...interface{}) {
+// 	outputLog(l.fatalL, l.hasRootFilePrefix, 3, v...)
+// 	os.Exit(1)
+// }
+// func (l *LogsLogger) Fatalf(format string, v ...interface{}) {
+// 	outputLogf(l.fatalL, l.hasRootFilePrefix, 3, format, v...)
+// 	os.Exit(1)
+// }
+
+// func (l *LogsLogger) Panic(v ...interface{}) {
+// 	outputLog(l.panicL, l.hasRootFilePrefix, 3, v...)
+// 	panic(fmt.Sprint(v...))
+// }
+
+// func (l *LogsLogger) Panicf(format string, v ...interface{}) {
+// 	outputLogf(l.panicL, l.hasRootFilePrefix, 3, format, v...)
+// 	panic(fmt.Sprintf(format, v...))
+// }
+
+
+// func NewLogConfWithParams(mode string, level LogLevel, encoding string, path string, maxSize int, maxBackups int, keepDays int, compress bool) LogConf {
+// 	return LogConf{
+// 		Mode:       mode,
+// 		Level:      int(level),
+// 		Encoding:   encoding,
+// 		Path:       path,
+// 		MaxSize:    maxSize,
+// 		MaxBackups: maxBackups,
+// 		KeepDays:   keepDays,
+// 		Compress:   compress,
+// 	}
+// }
+
+// func NewLogConfWithDefaults(custom LogConf) LogConf {
+// 	// 从默认配置开始
+// 	conf := defaultLogConf
+
+// 	// 如果用户提供了特定的值，则覆盖默认值
+// 	if custom.Mode != "" {
+// 		conf.Mode = custom.Mode
+// 	}
+// 	if custom.Level != 0 { // 注意：0 是 LogLevelInfo 的默认值，确保你的逻辑正确处理这种情况
+// 		conf.Level = custom.Level
+// 	}
+// 	if custom.Encoding != "" {
+// 		conf.Encoding = custom.Encoding
+// 	}
+// 	if custom.Path != "" {
+// 		conf.Path = custom.Path
+// 	}
+// 	if custom.MaxSize != 0 {
+// 		conf.MaxSize = custom.MaxSize
+// 	}
+// 	if custom.MaxBackups != 0 {
+// 		conf.MaxBackups = custom.MaxBackups
+// 	}
+// 	if custom.KeepDays != 0 {
+// 		conf.KeepDays = custom.KeepDays
+// 	}
+// 	if custom.Compress {
+// 		conf.Compress = custom.Compress
+// 	}
+
+// 	return conf
+// }
+
+// func NewDefaultLogger(flag int) *LogsLogger { // console 输出
+// 	var logger *LogsLogger = &LogsLogger{}
+// 	if flag&Lrootfile != 0 {
+// 		logger.hasRootFilePrefix = true
+// 		flag = flag &^ Lrootfile // 移除 Lrootfile 标志
+// 	}
+// 	logger.debugL = log.New(os.Stdout, "DEBUG: ", flag)
+// 	logger.infoL = log.New(os.Stdout, "INFO: ", flag)
+// 	logger.warnL = log.New(os.Stdout, "WARN: ", flag)
+// 	logger.errorL = log.New(os.Stdout, "ERROR: ", flag)
+// 	logger.fatalL = log.New(os.Stderr, "FATAL: ", flag)
+// 	logger.panicL = log.New(os.Stderr, "PANIC: ", flag)
+
+// 	return logger
+// }
+
+// func newLogger(writer io.Writer, flag int, prefixFormat string) (*LogsLogger, error) {
+// 	if writer == nil {
+// 		return nil, errors.New("writer cannot be nil")
+// 	}
+
+// 	logger := &LogsLogger{}
+
+// 	if flag&Lrootfile != 0 {
+// 		logger.hasRootFilePrefix = true
+// 		flag = flag &^ Lrootfile // 移除 Lrootfile 标志
+// 	}
+
+// 	// prefixes := map[*log.Logger]string{
+// 	// 	logger.Debug: "DEBUG: ",
+// 	// 	logger.Info:  "INFO: ",
+// 	// 	logger.Warn:  "WARN: ",
+// 	// 	logger.Error: "ERROR: ",
+// 	// 	logger.Fatal: "FATAL: ",
+// 	// 	logger.Panic: "PANIC: ",
+// 	// }
+
+// 	// // 可以自定义每个级别的前缀格式
+// 	// if prefixFormat == "json" {
+// 	// 	// 如果是 JSON 格式，可以在这里做定制化处理
+// 	// }
+
+// 	// 初始化每个级别的日志器
+// 	logger.debugL = log.New(writer, "DEBUG: ", flag)
+// 	logger.infoL = log.New(writer, "INFO: ", flag)
+// 	logger.warnL = log.New(writer, "WARN: ", flag)
+// 	logger.errorL = log.New(writer, "ERROR: ", flag)
+// 	logger.fatalL = log.New(writer, "FATAL: ", flag)
+// 	logger.panicL = log.New(writer, "PANIC: ", flag)
+
+// 	return logger, nil
+// }
+
+// func NewFileLogger(filename string, flag int) (*LogsLogger, error) {
+// 	if filename == "" {
+// 		return nil, errors.New("filename cannot be empty")
+// 	}
+
+// 	writer := &lumberjack.Logger{
+// 		Filename:   filename,
+// 		MaxSize:    defaultLogConf.MaxSize,
+// 		MaxBackups: defaultLogConf.MaxBackups,
+// 		MaxAge:     defaultLogConf.KeepDays,
+// 		Compress:   defaultLogConf.Compress,
+// 	}
+
+// 	return newLogger(writer, flag, defaultLogConf.Encoding)
+// }
+
+// func NewMultiWriterLogger(filename string, flag int) (*LogsLogger, error) {
+// 	if filename == "" {
+// 		return nil, errors.New("filename cannot be empty")
+// 	}
+
+// 	fileWriter := &lumberjack.Logger{
+// 		Filename:   filename,
+// 		MaxSize:    defaultLogConf.MaxSize,
+// 		MaxBackups: defaultLogConf.MaxBackups,
+// 		MaxAge:     defaultLogConf.KeepDays,
+// 		Compress:   defaultLogConf.Compress,
+// 	}
+
+// 	multiWriter := io.MultiWriter(os.Stdout, fileWriter)
+
+// 	return newLogger(multiWriter, flag, defaultLogConf.Encoding)
 // }

@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 )
@@ -60,81 +61,108 @@ func GetLogPrefix(skip int) (logPrefix string) {
 	return fmt.Sprintf("%s %d: ", relativePath, line)
 }
 
-func outputLog(logger *log.Logger, skip int, v ...interface{}) {
-	if currentLogLevel > LogLevel(logConfig.Level) {
-		return
+// 根据日志级别获取对应的log.Logger实例
+func getLoggerByLevel(logger *LogsLogger, level LogLevel) *log.Logger {
+	switch level {
+	case LogLevelDebug:
+		return logger.debugL
+	case LogLevelInfo:
+		return logger.infoL
+	case LogLevelWarn:
+		return logger.warnL
+	case LogLevelError:
+		return logger.errorL
+	case LogLevelFatal:
+		return logger.fatalL
+	case LogLevelPanic:
+		return logger.panicL
+	default:
+		return nil
 	}
-	msg := encoder.Encode(v...)
-	if rootFilePrefix {
-		msg = GetLogPrefix(skip) + msg
-	}
-	logger.Output(skip, msg)
 }
 
-func outputLogf(logger *log.Logger, skip int, format string, v ...interface{}) {
-	if currentLogLevel > LogLevel(logConfig.Level) {
+func containsFormatSpecifier(s string) bool {
+	return regexp.MustCompile(`%(?:\.\*|\*[0-9]*|[0-9.]*[a-zA-Z])`).MatchString(s)
+}
+
+func outputLog(logger *LogsLogger, level LogLevel, skip int, format string, v ...interface{}) {
+	if currentLogLevel > LogLevel(logger.logConf.Level) {
 		return
 	}
-	msg := encoder.Encode(fmt.Sprintf(format, v...))
-	if rootFilePrefix {
+
+	var msg string
+	if format == "" {
+		msg = logger.encoder.Encode(v...)
+	} else {
+		msg = logger.encoder.Encode(fmt.Sprintf(format, v...))
+	}
+	// else if containsFormatSpecifier(format) {
+    // // 如果包含格式化符号（如 %s、%d），则使用 fmt.Sprintf
+    // msg = logger.encoder.Encode(fmt.Sprintf(format, v...))
+	// } 
+
+	if logger.hasRootFilePrefix {
 		msg = GetLogPrefix(skip) + msg
 	}
-	logger.Output(skip, msg)
+	internalLogger := getLoggerByLevel(logger, level)
+	internalLogger.Output(skip, msg)
+}
+
+// output 方法的实现
+// Debug 输出 DEBUG 日志
+func Debug(v ...interface{}) {
+	outputLog(globalLogger, LogLevelDebug, 3, "", v...)
+}
+
+func Debugf(format string, v ...interface{}) {
+	outputLog(globalLogger, LogLevelDebug, 3, format, v...)
 }
 
 // Info 输出 INFO 日志
 func Info(v ...interface{}) {
-	outputLog(infoLogger, 3, v...)
+	outputLog(globalLogger, LogLevelInfo, 3, "", v...)
 }
 
 func Infof(format string, v ...interface{}) {
-	outputLogf(infoLogger, 3, format, v...)
+	outputLog(globalLogger, LogLevelInfo, 3, format, v...)
 }
 
 // Warn 输出 WARN 日志
 func Warn(v ...interface{}) {
-	outputLog(warnLogger, 3, v...)
+	outputLog(globalLogger, LogLevelInfo, 3, "", v...)
 }
 
 func Warnf(format string, v ...interface{}) {
-	outputLogf(warnLogger, 3, format, v...)
+	outputLog(globalLogger, LogLevelInfo, 3, format, v...)
 }
 
 // Error 输出 ERROR 日志
 func Error(v ...interface{}) {
-	outputLog(errorLogger, 3, v...)
+	outputLog(globalLogger, LogLevelError, 3, "", v...)
 }
 
 func Errorf(format string, v ...interface{}) {
-	outputLogf(errorLogger, 3, format, v...)
+	outputLog(globalLogger, LogLevelError, 3, format, v...)
 }
 
 // Fatal 输出 FATAL 日志并退出程序
 func Fatal(v ...interface{}) {
-	outputLog(fatalLogger, 3, v...)
+	outputLog(globalLogger, LogLevelFatal, 3, "", v...)
 	os.Exit(1)
 }
 
 func Fatalf(format string, v ...interface{}) {
-	outputLogf(fatalLogger, 3, format, v...)
+	outputLog(globalLogger, LogLevelFatal, 3, format, v...)
 	os.Exit(1)
 }
 
 // Panic 输出 PANIC 日志并触发 panic
 func Panic(v ...interface{}) {
-	outputLog(panicLogger, 3, v...)
+	outputLog(globalLogger, LogLevelPanic, 3, "", v...)
 	panic(fmt.Sprint(v...))
 }
 
 func Panicf(format string, v ...interface{}) {
-	outputLogf(panicLogger, 3, format, v...)
+	outputLog(globalLogger, LogLevelPanic, 3, format, v...)
 	panic(fmt.Sprintf(format, v...))
-}
-
-func Debug(v ...interface{}) {
-	outputLog(debugLogger, 3, v...)
-}
-
-func Debugf(format string, v ...interface{}) {
-	outputLogf(debugLogger, 3, format, v...)
 }
