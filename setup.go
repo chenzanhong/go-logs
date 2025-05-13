@@ -10,6 +10,12 @@ import (
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
+func init() {
+	if err := SetUp(defaultLogConf); err != nil {
+		fmt.Printf("Failed to initialize logger: %v", err)
+	}
+}
+
 // InitLogger 初始化日志记录器
 // 可以根据需要调整日志级别和输出位置
 func initLoggers(output io.Writer) {
