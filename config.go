@@ -74,9 +74,9 @@ const (
 	Lshortfile                                              // 使用短文件路径和行号（与 Llongfile 互斥）
 	LUTC                                                    // 使用 UTC 时间格式
 	Lmsgprefix                                              // 将日志前缀放在每行日志的开头
-	Lrootfile                                               // 自定义的相对路径前缀
+	Lrootfile                                               // 相对路径前缀（相对于项目根目录，基于go.mod进行判断）
 	LstdFlags      = Ldate | Ltime                          // 标准日志标志：日期和时间
-	LogFlagsCommon = Lmsgprefix | Ldate | Ltime | Lrootfile // 示例：一个常见的标志组合
+	LogFlagsCommon = Lmsgprefix | Ldate | Ltime | Lrootfile // 默认
 )
 
 const (

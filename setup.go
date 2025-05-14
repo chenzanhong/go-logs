@@ -18,6 +18,14 @@ func initLoggers(output io.Writer) {
 	if flags&Lrootfile != 0 {
 		globalLogger.hasRootFilePrefix = true
 		flags = flags &^ Lrootfile // 移除 Lrootfile 标志
+
+		// 检查并移除 Lshortfile 和 Llongfile，避免重复输出
+		if flags&Lshortfile != 0 {
+			flags = flags &^ Lshortfile
+		}
+		if flags&Llongfile != 0 {
+			flags = flags &^ Llongfile
+		}
 	}
 
 	var multiWriter io.Writer
@@ -194,10 +202,10 @@ func SetOutput(writer io.Writer) error {
 		// 文件输出
 		if w.Name() == os.DevNull {
 			mode = LogModeConsole // 特殊情况： /dev/null，仍视为console
-					fmt.Println("console0")
-		}else if isStdStream(w) {
+			fmt.Println("console0")
+		} else if isStdStream(w) {
 			mode = LogModeConsole
-					fmt.Println("console1")
+			fmt.Println("console1")
 		} else {
 			mode = LogModeFile
 			globalLogger.logConf.Path = w.Name()
@@ -206,7 +214,7 @@ func SetOutput(writer io.Writer) error {
 		// 尝试使用反射来检查是否为MultiWriter
 		writerVal := reflect.ValueOf(writer)
 		if writerVal.Kind() == reflect.Struct {
-			if mw, ok := writer.(interface{ Writers() []io.Writer}); ok {
+			if mw, ok := writer.(interface{ Writers() []io.Writer }); ok {
 				hasFile := false
 				hasConsole := false
 
@@ -214,9 +222,9 @@ func SetOutput(writer io.Writer) error {
 					if f, ok := wr.(*os.File); ok && !isStdStream(f) {
 						hasFile = true
 						globalLogger.logConf.Path = f.Name()
-					}else if isStdStream(wr) {
+					} else if isStdStream(wr) {
 						hasConsole = true
-					fmt.Println("console2")
+						fmt.Println("console2")
 					}
 				}
 
@@ -228,7 +236,7 @@ func SetOutput(writer io.Writer) error {
 				} else {
 					mode = LogModeConsole
 					fmt.Println("console3")
-				}	
+				}
 			} else {
 
 			}
@@ -337,6 +345,14 @@ func SetFlags(flags int) error {
 	if flags&Lrootfile != 0 {
 		globalLogger.hasRootFilePrefix = true
 		flags = flags &^ Lrootfile // 移除 Lrootfile 标志
+
+		// 检查并移除 Lshortfile 和 Llongfile，避免重复输出
+		if flags&Lshortfile != 0 {
+			flags = flags &^ Lshortfile
+		}
+		if flags&Llongfile != 0 {
+			flags = flags &^ Llongfile
+		}
 	}
 
 	globalLogger.logFlags = flags

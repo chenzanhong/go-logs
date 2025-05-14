@@ -1,4 +1,4 @@
-module github.com/chenzanhong/go-logs
+module github.com/chenzanhong/logs
 
 go 1.23.0
 

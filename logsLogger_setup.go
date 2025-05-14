@@ -14,7 +14,16 @@ func (l *LogsLogger) initLoggers(output io.Writer) {
 	flags := l.logFlags
 	if flags&Lrootfile != 0 {
 		l.hasRootFilePrefix = true
+
 		flags = flags &^ Lrootfile // 移除 Lrootfile 标志
+
+		// 检查并移除 Lshortfile 和 Llongfile，避免重复输出
+		if flags&Lshortfile != 0 {
+			flags = flags &^ Lshortfile
+		}
+		if flags&Llongfile != 0 {
+			flags = flags &^ Llongfile
+		}
 	}
 
 	var multiWriter io.Writer
@@ -292,6 +301,14 @@ func (l *LogsLogger) SetFlags(flags int) error {
 	if flags&Lrootfile != 0 {
 		l.hasRootFilePrefix = true
 		flags = flags &^ Lrootfile // 移除 Lrootfile 标志
+		
+		// 检查并移除 Lshortfile 和 Llongfile，避免重复输出
+		if flags&Lshortfile != 0 {
+			flags = flags &^ Lshortfile
+		}
+		if flags&Llongfile != 0 {
+			flags = flags &^ Llongfile
+		}
 	}
 
 	l.logFlags = flags

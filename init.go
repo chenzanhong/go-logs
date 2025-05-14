@@ -7,7 +7,7 @@ func init() {
 		fmt.Printf("Failed to initialize logger: %v", err)
 	}
 
-	logChan         = make(chan logItem, defaultLogChanSize)
+	logChan = make(chan logItem, defaultLogChanSize)
 	shutdownChan = make(chan struct{})
 
 	initWorkerOnce.Do(func() {

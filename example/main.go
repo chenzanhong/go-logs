@@ -4,8 +4,8 @@ import (
 	"fmt"
 	// "time"
 
-	glog "github.com/chenzanhong/go-logs"
-	"github.com/chenzanhong/go-logs/example/exam1"
+	glog "github.com/chenzanhong/logs"
+	"github.com/chenzanhong/logs/example/exam1"
 )
 
 func main() {
@@ -30,7 +30,9 @@ func main() {
 	if err != nil {
 		fmt.Println("err:", err)
 	}
-	logger2.Info("ok")
+	a := "1号"
+	b := "2号"
+	logger2.Infof("这是 %s 的 %s。", a, b)
 	logger2.Debug("ss")
 	logger2.Error("error")
 
