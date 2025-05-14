@@ -121,8 +121,12 @@ var (
 	mu2             sync.Mutex // LogsLogger 用于保护日志器的互斥锁
 	projectRootOnce sync.Once
 
-	initWorkerOnce sync.Once
-	logChan        = make(chan logItem, 1000)
+	defaultLogChanSize = 1000 // 设置足够大，应对大部分情况
+	logChan         chan logItem
+	initWorkerOnce  sync.Once
+	shutdownOnce   	sync.Once
+	shutdownChan   	chan struct{}
+	wg 				sync.WaitGroup
 )
 
 /*

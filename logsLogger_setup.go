@@ -16,13 +16,19 @@ func (l *LogsLogger) initLoggers(output io.Writer) {
 		l.hasRootFilePrefix = true
 		flags = flags &^ Lrootfile // 移除 Lrootfile 标志
 	}
+
+	var multiWriter io.Writer
+	if output != os.Stderr {
+		multiWriter = io.MultiWriter(os.Stderr, output)
+	}
+
 	// 初始化每个级别的日志器
 	l.debugL = log.New(output, "[DEBUG] ", flags)
 	l.infoL = log.New(output, "[INFO] ", flags)
 	l.warnL = log.New(output, "[WARN] ", flags)
 	l.errorL = log.New(output, "[ERROR] ", flags)
-	l.fatalL = log.New(os.Stderr, "[FATAL] ", flags)
-	l.panicL = log.New(os.Stderr, "[PANIC] ", flags)
+	l.fatalL = log.New(multiWriter, "[FATAL] ", flags)
+	l.panicL = log.New(multiWriter, "[PANIC] ", flags)
 }
 
 func (l *LogsLogger) initFileLog(logFilePath string) {
@@ -63,6 +69,29 @@ func (l *LogsLogger) initMultiWriter(logFilePath string) {
 func (l *LogsLogger) SetUp(logConf LogConf) error {
 	mu2.Lock()
 	defer mu2.Unlock()
+
+	// 检查日志配置是否有效
+	if logConf.Mode == "" {
+		logConf.Mode = defaultLogConf.Mode
+	}
+	if logConf.Level == 0 {
+		logConf.Level = defaultLogConf.Level
+	}
+	if logConf.Encoding == "" {
+		logConf.Encoding = defaultLogConf.Encoding
+	}
+	if logConf.MaxSize == 0 {
+		logConf.MaxSize = defaultLogConf.MaxSize
+	}
+	if logConf.MaxBackups == 0 {
+		logConf.MaxBackups = defaultLogConf.MaxBackups
+	}
+	if logConf.KeepDays == 0 {
+		logConf.KeepDays = defaultLogConf.KeepDays
+	}
+	if logConf.Path == "" {
+		logConf.Path = defaultLogConf.Path
+	}
 
 	l.logConf = logConf
 	l.logFlags = LogFlagsCommon
@@ -114,7 +143,7 @@ func (l *LogsLogger) SetUp(logConf LogConf) error {
 	return nil
 }
 
-// SetOutput 设置日志输出位置
+// SetOutput 设置日志输出位置，自动更新Mode
 func (l *LogsLogger) SetOutput(writer io.Writer) error {
 	mu2.Lock()
 	defer mu2.Unlock()
@@ -123,42 +152,49 @@ func (l *LogsLogger) SetOutput(writer io.Writer) error {
 		return errors.New("writer cannot be nil")
 	}
 
-	switch l.logConf.Mode {
-	case "file":
-		if fWriter, ok := writer.(*os.File); ok {
-			l.initFileLog(fWriter.Name())
-		} else if mw, ok := writer.(interface{ Writers() []io.Writer }); ok {
-			for _, w := range mw.Writers() {
-				if fWriter, ok := w.(*os.File); ok {
-					l.initFileLog(fWriter.Name())
-					break
-				}
-			}
+	l.output = writer
+
+	mode := LogModeConsole
+
+	switch w := writer.(type) {
+	case *os.File:
+		// 文件输出
+		if w.Name() == os.DevNull {
+			mode = LogModeConsole // 特殊情况： /dev/null，仍视为console
+		}else if isStdStream(w) {
+			mode = LogModeConsole
 		} else {
-			return errors.New("unsupported writer type for file mode")
+			mode = LogModeFile
+			l.logConf.Path = w.Name()
 		}
-	case "both":
-		// 如果是 both 模式，调用 l.initMultiWriter 并传递 writer 中的路径
-		if fWriter, ok := writer.(*os.File); ok {
-			l.initMultiWriter(fWriter.Name())
-		} else if mw, ok := writer.(interface{ Writers() []io.Writer }); ok {
-			// 如果是 MultiWriter，尝试从中找到 *os.File
-			for _, w := range mw.Writers() {
-				if fWriter, ok := w.(*os.File); ok {
-					l.initMultiWriter(fWriter.Name())
-					break
-				}
+	case interface{ Writers() []io.Writer }:
+		hasFile := false
+		hasConsole := false
+
+		for _, wr := range w.Writers() {
+			if f, ok := wr.(*os.File); ok && !isStdStream(f) {
+				hasFile = true
+				l.logConf.Path = f.Name()
+			} else if isStdStream(wr) {
+				hasConsole = true
 			}
-		} else {
-			return errors.New("unsupported writer type for both mode")
 		}
-	case "console":
-		// 如果是 console 模式，直接设置 l.output
-		l.output = writer
-		l.initLoggers(l.output)
+
+		if hasFile && hasConsole {
+			mode = LogModeBoth
+		} else if hasFile {
+			mode = LogModeFile
+		} else {
+			mode = LogModeConsole
+		}
 	default:
-		return errors.New("unsupported log mode")
+		mode = LogModeConsole
 	}
+
+	fmt.Println("mode：", mode)
+
+	l.logConf.Mode = mode
+	initLoggers(l.output)
 
 	return nil
 }
@@ -280,40 +316,82 @@ func (l *LogsLogger) SetLogWriteStrategy(strategy logWriteStrategy) {
 func (l *LogsLogger) SetPrefix(prefix string) {
 	mu2.Lock()
 	defer mu2.Unlock()
-	l.debugL.SetPrefix(prefix)
-	l.infoL.SetPrefix(prefix)
-	l.warnL.SetPrefix(prefix)
-	l.errorL.SetPrefix(prefix)
-	l.fatalL.SetPrefix(prefix)
-	l.panicL.SetPrefix(prefix)
+	l.debugL.SetPrefix("[DEBUG] " + prefix)
+	l.infoL.SetPrefix("[INFO] " + prefix)
+	l.warnL.SetPrefix("[WARN] " + prefix)
+	l.errorL.SetPrefix("[ERROR] " + prefix)
+	l.fatalL.SetPrefix("[FATAL] " + prefix)
+	l.panicL.SetPrefix("[PANIC] " + prefix)
 }
+
+func (l *LogsLogger) SetDebugPrefixWithoutDefaultPrefix(prefix string) {
+	mu2.Lock()
+	defer mu2.Unlock()
+	l.debugL.SetPrefix(prefix)
+}
+
 func (l *LogsLogger) SetDebugPrefix(prefix string) {
 	mu2.Lock()
 	defer mu2.Unlock()
-	l.debugL.SetPrefix(prefix)
+	l.debugL.SetPrefix("[DEBUG] " + prefix)
 }
-func (l *LogsLogger) SetInfoPrefix(prefix string) {
+
+func (l *LogsLogger) SetInfoPrefixWithoutDefaultPrefix(prefix string) {
 	mu2.Lock()
 	defer mu2.Unlock()
 	l.infoL.SetPrefix(prefix)
 }
-func (l *LogsLogger) SetWarnPrefix(prefix string) {
+
+func (l *LogsLogger) SetInfoPrefix(prefix string) {
+	mu2.Lock()
+	defer mu2.Unlock()
+	l.infoL.SetPrefix("[INFO] " + prefix)
+}
+
+func (l *LogsLogger) SetWarnPrefixWithoutDefaultPrefix(prefix string) {
 	mu2.Lock()
 	defer mu2.Unlock()
 	l.warnL.SetPrefix(prefix)
 }
-func (l *LogsLogger) SetErrorPrefix(prefix string) {
+
+func (l *LogsLogger) SetWarnPrefix(prefix string) {
+	mu2.Lock()
+	defer mu2.Unlock()
+	l.warnL.SetPrefix("[WARN] " + prefix)
+}
+
+func (l *LogsLogger) SetErrorPrefixWithoutDefaultPrefix(prefix string) {
 	mu2.Lock()
 	defer mu2.Unlock()
 	l.errorL.SetPrefix(prefix)
 }
-func (l *LogsLogger) SetFatalPrefix(prefix string) {
+
+func (l *LogsLogger) SetErrorPrefix(prefix string) {
+	mu2.Lock()
+	defer mu2.Unlock()
+	l.errorL.SetPrefix("[ERROR] " + prefix)
+}
+
+func (l *LogsLogger) SetFatalPrefixWithoutDefaultPrefix(prefix string) {
 	mu2.Lock()
 	defer mu2.Unlock()
 	l.fatalL.SetPrefix(prefix)
 }
-func (l *LogsLogger) SetPanicPrefix(prefix string) {
+
+func (l *LogsLogger) SetFatalPrefix(prefix string) {
+	mu2.Lock()
+	defer mu2.Unlock()
+	l.fatalL.SetPrefix("[FATAL] " + prefix)
+}
+
+func (l *LogsLogger) SetPanicPrefixWithoutDefaultPrefix(prefix string) {
 	mu2.Lock()
 	defer mu2.Unlock()
 	l.panicL.SetPrefix(prefix)
+}
+
+func (l *LogsLogger) SetPanicPrefix(prefix string) {
+	mu2.Lock()
+	defer mu2.Unlock()
+	l.panicL.SetPrefix("[PANIC] " + prefix)
 }

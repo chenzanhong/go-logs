@@ -2,8 +2,10 @@ package main
 
 import (
 	"fmt"
+	// "time"
 
 	glog "github.com/chenzanhong/go-logs"
+	"github.com/chenzanhong/go-logs/example/exam1"
 )
 
 func main() {
@@ -23,7 +25,7 @@ func main() {
 
 	// 创建一个新的日志器
 	fmt.Println("创建一个新的日志器")
-	conf := glog.LogConf{Mode: "both", Level: int(glog.LogLevelDebug), Encoding: "json", Path: "logs/access.log", MaxSize: 10, MaxBackups: 10, KeepDays: 10, Compress: true}
+	conf := glog.LogConf{Mode: "both", Level: int(glog.LogLevelDebug), Encoding: "json", Path: "logs/logs.log", MaxSize: 10, MaxBackups: 10, KeepDays: 10, Compress: true}
 	logger2, err := glog.NewLogger(conf)
 	if err != nil {
 		fmt.Println("err:", err)
@@ -31,4 +33,40 @@ func main() {
 	logger2.Info("ok")
 	logger2.Debug("ss")
 	logger2.Error("error")
+
+	fmt.Println("下面是exam输出：")
+	exam1.LogExam()
+
+	fmt.Println("回到main函数")
+	glog.Info("0")
+	glog.Info("1")
+	glog.Debug("2")
+	glog.Error("3")
+	glog.Info("4")
+	glog.Debug("5")
+	glog.Error("6")
+	glog.Info("7")
+	glog.Debug("8")
+	glog.Error("9")
+	glog.Info("0")
+	glog.Info("1")
+	glog.Debug("2")
+	glog.Error("3")
+	glog.Info("4")
+	glog.Debug("5")
+	glog.Error("6")
+	glog.Info("7")
+	glog.Debug("8")
+	glog.Error("9")
+	glog.Info("0")
+	glog.Info("1")
+	glog.Debug("2")
+	glog.Error("3")
+	glog.Info("4")
+	glog.Debug("5")
+	glog.Error("6")
+	glog.Info("7")
+	glog.Debug("8")
+	glog.Error("9")
+	glog.Close()
 }

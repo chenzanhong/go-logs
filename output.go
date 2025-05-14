@@ -10,13 +10,6 @@ import (
 	"strings"
 )
 
-func worker() {
-	for item := range logChan {
-		internalLogger := getLoggerByLevel(item.logger, item.level)
-		internalLogger.Output(item.skip, item.msg)
-	}
-}
-
 // findProjectRoot 查找项目的根目录（假设存在 go.mod 文件）
 func findProjectRoot() (string, error) {
 	_, filename, _, ok := runtime.Caller(0)
@@ -113,9 +106,11 @@ func outputLog(logger *LogsLogger, level LogLevel, skip int, format string, v ..
 	}
 
 	if logger.logWriteStrategy == LoggingSync || logger.logConf.Mode == LogModeConsole {
+		fmt.Println("刘伟开始叫了哦，快跑啊！")
 		internalLogger := getLoggerByLevel(logger, level)
 		internalLogger.Output(skip, msg)
 	} else {
+		fmt.Println("异步输出")
 		select {
 		case logChan <- logItem{logger: logger, level: level, msg: msg, skip: skip + 1}:
 		default:
