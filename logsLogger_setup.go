@@ -61,12 +61,13 @@ func (l *LogsLogger) initMultiWriter(logFilePath string) {
 }
 
 func (l *LogsLogger) SetUp(logConf LogConf) error {
-	mu.Lock()
-	defer mu.Unlock()
+	mu2.Lock()
+	defer mu2.Unlock()
 
 	l.logConf = logConf
 	l.logFlags = LogFlagsCommon
 	l.hasRootFilePrefix = false
+	l.logWriteStrategy = LoggingSync // 默认同步模式
 
 	if l.logConf.Mode == "file" || l.logConf.Mode == "both" {
 		if l.logConf.Path == "" {
@@ -89,10 +90,10 @@ func (l *LogsLogger) SetUp(logConf LogConf) error {
 		return errors.New("invalid log level")
 	}
 
-	currentLogLevel = LogLevel(logConf.Level)
+	// currentLogLevel = LogLevel(logConf.Level)
 
 	// 获取项目根目录
-	once.Do(func() {
+	projectRootOnce.Do(func() {
 		var err error
 		projectRoot, err = findProjectRoot()
 		if err != nil {
@@ -115,8 +116,8 @@ func (l *LogsLogger) SetUp(logConf LogConf) error {
 
 // SetOutput 设置日志输出位置
 func (l *LogsLogger) SetOutput(writer io.Writer) error {
-	mu.Lock()
-	defer mu.Unlock()
+	mu2.Lock()
+	defer mu2.Unlock()
 
 	if writer == nil {
 		return errors.New("writer cannot be nil")
@@ -165,8 +166,8 @@ func (l *LogsLogger) SetOutput(writer io.Writer) error {
 // 设置编码
 func (l *LogsLogger) SetEncoding(encoding string) error {
 	// LogEncodingJSON、LOgEncodingPlain
-	mu.Lock()
-	defer mu.Unlock()
+	mu2.Lock()
+	defer mu2.Unlock()
 	l.logConf.Encoding = encoding
 
 	switch encoding {
@@ -182,8 +183,8 @@ func (l *LogsLogger) SetEncoding(encoding string) error {
 
 // 设置日志文件最大大小
 func (l *LogsLogger) SetMaxSize(maxSize int) {
-	mu.Lock()
-	defer mu.Unlock()
+	mu2.Lock()
+	defer mu2.Unlock()
 	l.logConf.MaxSize = maxSize
 
 	// 重新初始化日志器以应用新设置
@@ -196,8 +197,8 @@ func (l *LogsLogger) SetMaxSize(maxSize int) {
 
 // 设置日志文件最大保留天数
 func (l *LogsLogger) SetMaxAge(maxAge int) {
-	mu.Lock()
-	defer mu.Unlock()
+	mu2.Lock()
+	defer mu2.Unlock()
 	l.logConf.KeepDays = maxAge
 
 	// 重新初始化日志器以应用新设置
@@ -210,8 +211,8 @@ func (l *LogsLogger) SetMaxAge(maxAge int) {
 
 // 设置日志文件最大保留数量
 func (l *LogsLogger) SetMaxBackups(maxBackups int) {
-	mu.Lock()
-	defer mu.Unlock()
+	mu2.Lock()
+	defer mu2.Unlock()
 	l.logConf.MaxBackups = maxBackups
 
 	if l.logConf.Mode == "file" {
@@ -222,21 +223,21 @@ func (l *LogsLogger) SetMaxBackups(maxBackups int) {
 }
 
 func (l *LogsLogger) SetLogLevel(level LogLevel) error {
-	mu.Lock()
-	defer mu.Unlock()
+	mu2.Lock()
+	defer mu2.Unlock()
 
 	if level < LogLevelDebug {
 		return errors.New("invalid log level")
 	}
 
-	currentLogLevel = level
+	l.logConf.Level = int(level)
 	return nil
 }
 
 // 设置标志
 func (l *LogsLogger) SetFlags(flags int) error {
-	mu.Lock()
-	defer mu.Unlock()
+	mu2.Lock()
+	defer mu2.Unlock()
 
 	// 对flags的合法性进行检查
 	// 检查是否设置了无效的标志
@@ -268,10 +269,17 @@ func (l *LogsLogger) SetFlags(flags int) error {
 	return nil
 }
 
+// 设置日志同步还是异步
+func (l *LogsLogger) SetLogWriteStrategy(strategy logWriteStrategy) {
+	mu2.Lock()
+	defer mu2.Unlock()
+	l.logWriteStrategy = strategy
+}
+
 // 设置前缀
 func (l *LogsLogger) SetPrefix(prefix string) {
-	mu.Lock()
-	defer mu.Unlock()
+	mu2.Lock()
+	defer mu2.Unlock()
 	l.debugL.SetPrefix(prefix)
 	l.infoL.SetPrefix(prefix)
 	l.warnL.SetPrefix(prefix)
@@ -280,20 +288,32 @@ func (l *LogsLogger) SetPrefix(prefix string) {
 	l.panicL.SetPrefix(prefix)
 }
 func (l *LogsLogger) SetDebugPrefix(prefix string) {
+	mu2.Lock()
+	defer mu2.Unlock()
 	l.debugL.SetPrefix(prefix)
 }
 func (l *LogsLogger) SetInfoPrefix(prefix string) {
+	mu2.Lock()
+	defer mu2.Unlock()
 	l.infoL.SetPrefix(prefix)
 }
 func (l *LogsLogger) SetWarnPrefix(prefix string) {
+	mu2.Lock()
+	defer mu2.Unlock()
 	l.warnL.SetPrefix(prefix)
 }
 func (l *LogsLogger) SetErrorPrefix(prefix string) {
+	mu2.Lock()
+	defer mu2.Unlock()
 	l.errorL.SetPrefix(prefix)
 }
 func (l *LogsLogger) SetFatalPrefix(prefix string) {
+	mu2.Lock()
+	defer mu2.Unlock()
 	l.fatalL.SetPrefix(prefix)
 }
 func (l *LogsLogger) SetPanicPrefix(prefix string) {
+	mu2.Lock()
+	defer mu2.Unlock()
 	l.panicL.SetPrefix(prefix)
 }

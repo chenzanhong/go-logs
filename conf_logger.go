@@ -66,10 +66,11 @@ func NewDefaultLogger() *LogsLogger {
 		logFlags:          LogFlagsCommon,
 		hasRootFilePrefix: false,
 		logConf:           defaultLogConf,
+		logWriteStrategy:  LoggingSync,
 	}
 
 	// 获取项目根目录
-	once.Do(func() {
+	projectRootOnce.Do(func() {
 		var err error
 		projectRoot, err = findProjectRoot()
 		if err != nil {
@@ -114,7 +115,7 @@ func newLogger(writer io.Writer, flag int, prefixFormat string) (*LogsLogger, er
 	return logger, nil
 }
 
-func NewFileLogger(filename string, flag int) (*LogsLogger, error) {
+func newFileLogger(filename string, flag int) (*LogsLogger, error) {
 	if filename == "" {
 		return nil, errors.New("filename cannot be empty")
 	}
@@ -130,7 +131,7 @@ func NewFileLogger(filename string, flag int) (*LogsLogger, error) {
 	return newLogger(writer, flag, defaultLogConf.Encoding)
 }
 
-func NewMultiWriterLogger(filename string, flag int) (*LogsLogger, error) {
+func newMultiWriterLogger(filename string, flag int) (*LogsLogger, error) {
 	if filename == "" {
 		return nil, errors.New("filename cannot be empty")
 	}

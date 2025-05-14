@@ -10,12 +10,6 @@ import (
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
-func init() {
-	if err := SetUp(defaultLogConf); err != nil {
-		fmt.Printf("Failed to initialize logger: %v", err)
-	}
-}
-
 // InitLogger 初始化日志记录器
 // 可以根据需要调整日志级别和输出位置
 func initLoggers(output io.Writer) {
@@ -78,6 +72,7 @@ func SetUp(logConf LogConf) error {
 	globalLogger.logConf = logConf
 	globalLogger.logFlags = LogFlagsCommon
 	globalLogger.hasRootFilePrefix = false
+	globalLogger.logWriteStrategy = LoggingSync
 
 	if globalLogger.logConf.Mode == "file" || globalLogger.logConf.Mode == "both" {
 		if globalLogger.logConf.Path == "" {
@@ -100,10 +95,10 @@ func SetUp(logConf LogConf) error {
 		return errors.New("invalid log level")
 	}
 
-	currentLogLevel = LogLevel(logConf.Level)
+	// currentLogLevel = LogLevel(logConf.Level)
 
 	// 获取项目根目录
-	once.Do(func() {
+	projectRootOnce.Do(func() {
 		var err error
 		projectRoot, err = findProjectRoot()
 		if err != nil {
@@ -246,15 +241,16 @@ func SetMaxBackups(maxBackups int) {
 	}
 }
 
+// 设置日志级别
 func SetLogLevel(level LogLevel) error {
 	mu.Lock()
 	defer mu.Unlock()
 
-	if level < LogLevelDebug {
+	if level < LogLevelDebug || level > LogLevelPanic {
 		return errors.New("invalid log level")
 	}
 
-	currentLogLevel = level
+	globalLogger.logConf.Level = int(level)
 	return nil
 }
 
@@ -293,6 +289,13 @@ func SetFlags(flags int) error {
 	return nil
 }
 
+// 设置日志同步还是异步
+func SetLogWriteStrategy(strategy logWriteStrategy) {
+	mu.Lock()
+	defer mu.Unlock()
+	globalLogger.logWriteStrategy = strategy
+}
+
 // 设置前缀
 func SetPrefix(prefix string) {
 	mu.Lock()
@@ -304,24 +307,39 @@ func SetPrefix(prefix string) {
 	globalLogger.fatalL.SetPrefix(prefix)
 	globalLogger.panicL.SetPrefix(prefix)
 }
+
 func SetDebugPrefix(prefix string) {
+	mu.Lock()
+	defer mu.Unlock()
 	globalLogger.debugL.SetPrefix(prefix)
 }
 func SetInfoPrefix(prefix string) {
+	mu.Lock()
+	defer mu.Unlock()
 	globalLogger.infoL.SetPrefix(prefix)
 }
 func SetWarnPrefix(prefix string) {
+	mu.Lock()
+	defer mu.Unlock()
 	globalLogger.warnL.SetPrefix(prefix)
 }
 func SetErrorPrefix(prefix string) {
+	mu.Lock()
+	defer mu.Unlock()
 	globalLogger.errorL.SetPrefix(prefix)
 }
 func SetFatalPrefix(prefix string) {
+	mu.Lock()
+	defer mu.Unlock()
 	globalLogger.fatalL.SetPrefix(prefix)
 }
 func SetPanicPrefix(prefix string) {
+	mu.Lock()
+	defer mu.Unlock()
 	globalLogger.panicL.SetPrefix(prefix)
 }
 func SetLoggerPrefix(logger *log.Logger, newPrefix string) {
+	mu.Lock()
+	defer mu.Unlock()
 	logger.SetPrefix(newPrefix)
 }

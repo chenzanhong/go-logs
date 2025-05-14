@@ -10,6 +10,13 @@ import (
 	"strings"
 )
 
+func worker() {
+	for item := range logChan {
+		internalLogger := getLoggerByLevel(item.logger, item.level)
+		internalLogger.Output(item.skip, item.msg)
+	}
+}
+
 // findProjectRoot 查找项目的根目录（假设存在 go.mod 文件）
 func findProjectRoot() (string, error) {
 	_, filename, _, ok := runtime.Caller(0)
@@ -34,7 +41,7 @@ func findProjectRoot() (string, error) {
 
 // GetRelativePath 获取调用者的相对路径和行号
 func GetRelativePath(skip int) (file string, line int) {
-	once.Do(func() {
+	projectRootOnce.Do(func() {
 		var err error
 		projectRoot, err = findProjectRoot()
 		if err != nil {
@@ -86,7 +93,7 @@ func containsFormatSpecifier(s string) bool {
 }
 
 func outputLog(logger *LogsLogger, level LogLevel, skip int, format string, v ...interface{}) {
-	if currentLogLevel > LogLevel(logger.logConf.Level) {
+	if level < LogLevel(logger.logConf.Level) {
 		return
 	}
 
@@ -97,15 +104,24 @@ func outputLog(logger *LogsLogger, level LogLevel, skip int, format string, v ..
 		msg = logger.encoder.Encode(fmt.Sprintf(format, v...))
 	}
 	// else if containsFormatSpecifier(format) {
-    // // 如果包含格式化符号（如 %s、%d），则使用 fmt.Sprintf
-    // msg = logger.encoder.Encode(fmt.Sprintf(format, v...))
-	// } 
+	// // 如果包含格式化符号（如 %s、%d），则使用 fmt.Sprintf
+	// msg = logger.encoder.Encode(fmt.Sprintf(format, v...))
+	// }
 
 	if logger.hasRootFilePrefix {
 		msg = GetLogPrefix(skip) + msg
 	}
-	internalLogger := getLoggerByLevel(logger, level)
-	internalLogger.Output(skip, msg)
+
+	if logger.logWriteStrategy == LoggingSync || logger.logConf.Mode == LogModeConsole {
+		internalLogger := getLoggerByLevel(logger, level)
+		internalLogger.Output(skip, msg)
+	} else {
+		select {
+		case logChan <- logItem{logger: logger, level: level, msg: msg, skip: skip + 1}:
+		default:
+			log.Printf("日志通道已满，暂时无法异步写入日志: %s", msg)
+		}
+	}
 }
 
 // output 方法的实现

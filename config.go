@@ -33,9 +33,19 @@ type LogsLogger struct { // 包含所有日志器的结构体
 	hasRootFilePrefix bool // 是否打印自定义的相对路径前缀
 	output            io.Writer
 	logFlags          int
-	encoder           Encoder // 编码器
-	logConf           LogConf // 日志配置
+	encoder           Encoder          // 编码器
+	logConf           LogConf          // 日志配置
+	logWriteStrategy  logWriteStrategy // 默认日志模式为同步模式
 }
+
+type logItem struct {
+	logger *LogsLogger
+	level  LogLevel
+	msg    string
+	skip   int
+}
+
+type logWriteStrategy int
 
 const (
 	LogLevelDebug LogLevel = iota
@@ -69,6 +79,11 @@ const (
 	LogFlagsCommon = Lmsgprefix | Ldate | Ltime | Lrootfile // 示例：一个常见的标志组合
 )
 
+const (
+	LoggingSync  logWriteStrategy = iota // 同步模式
+	LoggingAsync                         // 异步模式
+)
+
 var (
 	// logConfig      LogConf    // 日志配置
 	defaultLogConf = LogConf{ // 默认日志配置
@@ -76,9 +91,9 @@ var (
 		Level:      int(LogLevelInfo), // 默认日志级别为 Info
 		Encoding:   "plain",           // 默认编码为 plain text
 		Path:       "",                // 控制台模式下不需要路径
-		MaxSize:    10,                // 默认每个日志文件最大 10MB
+		MaxSize:    1,                 // 默认每个日志文件最大 10MB
 		MaxBackups: 3,                 // 默认最多保留 3 个备份
-		KeepDays:   7,                 // 默认日志文件保留 7 天
+		KeepDays:   1,                 // 默认日志文件保留 30 天
 		Compress:   false,             // 默认不压缩旧的日志文件
 	}
 
@@ -94,30 +109,33 @@ var (
 		logFlags:          LogFlagsCommon,
 		hasRootFilePrefix: false,
 		logConf:           defaultLogConf,
+		logWriteStrategy:  LoggingSync,
 	}
 
-	globalLogger = &LogsLogger{} // 全局日志器
-
-	// // 日志器
-	// debugLogger *log.Logger
-	// infoLogger  *log.Logger
-	// warnLogger  *log.Logger
-	// errorLogger *log.Logger
-	// fatalLogger *log.Logger
-	// panicLogger *log.Logger
+	globalLogger = &LogsLogger{} // 全局日志器实例
 
 	fileLogger *lumberjack.Logger // 用于文件输出的日志器
 
-	// encoder Encoder = &PlainEncoder{} // 默认使用 PlainEncoder
+	projectRoot     string
+	mu              sync.Mutex // globalLogger 用于保护日志器的互斥锁
+	mu2             sync.Mutex // LogsLogger 用于保护日志器的互斥锁
+	projectRootOnce sync.Once
 
-	// logFlags = LogFlagsCommon // 默认日志标志
+	initWorkerOnce sync.Once
+	logChan        = make(chan logItem, 1000)
+)
+
+/*
+	弃用的全局变量
+
+	encoder Encoder = &PlainEncoder{} // 默认使用 PlainEncoder
+
+	logFlags = LogFlagsCommon // 默认日志标志
+
+	logOutput io.Writer = os.Stdout // 默认输出到控制台
+
+	rootFilePrefix bool = false // 自定义的相对路径前缀
 
 	currentLogLevel LogLevel = LogLevelInfo // 默认日志级别为 Info
 
-	// logOutput io.Writer = os.Stdout // 默认输出到控制台
-
-	// rootFilePrefix bool = false // 自定义的相对路径前缀
-	projectRoot string
-	mu          sync.Mutex
-	once        sync.Once
-)
+*/
