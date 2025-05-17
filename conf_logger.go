@@ -1,16 +1,23 @@
 package logs
 
 import (
-	"errors"
-	"io"
-	"log"
+	"bytes"
 	"os"
-
-	"gopkg.in/natefinch/lumberjack.v2"
+	"sync"
+	"time"
 )
 
 func NewDefaultLogConf() LogConf {
-	return defaultLogConf
+	return LogConf{ // 默认日志配置
+		Mode:       "console",         // 默认输出到控制台,
+		Level:      int(LogLevelInfo), // 默认日志级别为 INFO
+		Encoding:   "plain",           // 默认编码为 plain text
+		Path:       "",                // 控制台模式下不需要路径
+		MaxSize:    1,                 // 默认每个日志文件最大 10MB
+		MaxBackups: 3,                 // 默认最多保留 3 个备份
+		KeepDays:   1,                 // 默认日志文件保留 30 天
+		Compress:   false,             // 默认不压缩旧的日志文件
+	}
 }
 
 func NewLogConfWithParams(mode string, level LogLevel, encoding string, path string, maxSize int, maxBackups int, keepDays int, compress bool) LogConf {
@@ -34,7 +41,7 @@ func NewLogConfWithDefaults(custom LogConf) LogConf {
 	if custom.Mode != "" {
 		conf.Mode = custom.Mode
 	}
-	if custom.Level != 0 { // 注意：0 是 LogLevelInfo 的默认值，确保你的逻辑正确处理这种情况
+	if custom.Level >= 0 && custom.Level <= 5 {
 		conf.Level = custom.Level
 	}
 	if custom.Encoding != "" {
@@ -67,6 +74,20 @@ func NewDefaultLogger() *LogsLogger {
 		hasRootFilePrefix: false,
 		logConf:           defaultLogConf,
 		logWriteStrategy:  LoggingSync,
+		logChan:           make(chan *logItem, defaultLogChanSize),
+		shutdownChan:      make(chan struct{}),
+		itemPool: sync.Pool{
+			New: func() interface{} {
+				return &logItem{}
+			},
+		},
+		batchBuffer: make([][]byte, 0, batchSize),
+		batchTicker: time.NewTicker(flushInterval),
+		bufferPool: sync.Pool{
+			New: func() interface{} {
+				return new(bytes.Buffer)
+			},
+		},
 	}
 
 	// 获取项目根目录
@@ -85,66 +106,9 @@ func NewDefaultLogger() *LogsLogger {
 // NewLogger 函数用于创建一个新的日志器实例
 func NewLogger(conf LogConf) (*LogsLogger, error) {
 	var logger *LogsLogger = &LogsLogger{}
-	err := logger.SetUp(conf)
+	err := logger.Setup(conf)
 	if err != nil {
 		return nil, err
 	}
 	return logger, nil
-}
-
-func newLogger(writer io.Writer, flag int, prefixFormat string) (*LogsLogger, error) {
-	if writer == nil {
-		return nil, errors.New("writer cannot be nil")
-	}
-
-	logger := &LogsLogger{}
-
-	if flag&Lrootfile != 0 {
-		logger.hasRootFilePrefix = true
-		flag = flag &^ Lrootfile // 移除 Lrootfile 标志
-	}
-
-	// 初始化每个级别的日志器
-	logger.debugL = log.New(writer, "DEBUG: ", flag)
-	logger.infoL = log.New(writer, "INFO: ", flag)
-	logger.warnL = log.New(writer, "WARN: ", flag)
-	logger.errorL = log.New(writer, "ERROR: ", flag)
-	logger.fatalL = log.New(writer, "FATAL: ", flag)
-	logger.panicL = log.New(writer, "PANIC: ", flag)
-
-	return logger, nil
-}
-
-func newFileLogger(filename string, flag int) (*LogsLogger, error) {
-	if filename == "" {
-		return nil, errors.New("filename cannot be empty")
-	}
-
-	writer := &lumberjack.Logger{
-		Filename:   filename,
-		MaxSize:    defaultLogConf.MaxSize,
-		MaxBackups: defaultLogConf.MaxBackups,
-		MaxAge:     defaultLogConf.KeepDays,
-		Compress:   defaultLogConf.Compress,
-	}
-
-	return newLogger(writer, flag, defaultLogConf.Encoding)
-}
-
-func newMultiWriterLogger(filename string, flag int) (*LogsLogger, error) {
-	if filename == "" {
-		return nil, errors.New("filename cannot be empty")
-	}
-
-	fileWriter := &lumberjack.Logger{
-		Filename:   filename,
-		MaxSize:    defaultLogConf.MaxSize,
-		MaxBackups: defaultLogConf.MaxBackups,
-		MaxAge:     defaultLogConf.KeepDays,
-		Compress:   defaultLogConf.Compress,
-	}
-
-	multiWriter := io.MultiWriter(os.Stdout, fileWriter)
-
-	return newLogger(multiWriter, flag, defaultLogConf.Encoding)
 }

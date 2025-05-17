@@ -1,22 +1,32 @@
 package logs
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"reflect"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	log "github.com/chenzanhong/logs/log_origin"
 
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
-// InitLogger 初始化日志记录器
-// 可以根据需要调整日志级别和输出位置
-func initLoggers(output io.Writer) {
-	flags := globalLogger.logFlags
+func (l *LogsLogger) initLoggers(output io.Writer) error {
+
+	if output == nil {
+		return fmt.Errorf("output cannot be nil")
+	}
+	l.output = output
+
+	flags := l.logFlags
 	if flags&Lrootfile != 0 {
-		globalLogger.hasRootFilePrefix = true
+		l.hasRootFilePrefix = true
+
 		flags = flags &^ Lrootfile // 移除 Lrootfile 标志
 
 		// 检查并移除 Lshortfile 和 Llongfile，避免重复输出
@@ -34,55 +44,53 @@ func initLoggers(output io.Writer) {
 	}
 
 	// 初始化每个级别的日志器
-	globalLogger.debugL = log.New(output, "[DEBUG] ", flags)
-	globalLogger.infoL = log.New(output, "[INFO] ", flags)
-	globalLogger.warnL = log.New(output, "[WARN] ", flags)
-	globalLogger.errorL = log.New(output, "[ERROR] ", flags)
-	globalLogger.fatalL = log.New(multiWriter, "[FATAL] ", flags)
-	globalLogger.panicL = log.New(multiWriter, "[PANIC] ", flags)
+	l.debugL = log.New(output, "[DEBUG] ", flags)
+	l.infoL = log.New(output, "[INFO] ", flags)
+	l.warnL = log.New(output, "[WARN] ", flags)
+	l.errorL = log.New(output, "[ERROR] ", flags)
+	l.fatalL = log.New(multiWriter, "[FATAL] ", flags)
+	l.panicL = log.New(multiWriter, "[PANIC] ", flags)
+
+	return nil
 }
 
-// initFileLog 初始化日志文件输出
-func initFileLog(logFilePath string) {
-	if fileLogger == nil {
-		fileLogger = &lumberjack.Logger{}
-	}
-	fileLogger.Filename = logFilePath
-	fileLogger.MaxSize = globalLogger.logConf.MaxSize
-	fileLogger.MaxBackups = globalLogger.logConf.MaxBackups
-	fileLogger.MaxAge = globalLogger.logConf.KeepDays
-	fileLogger.Compress = globalLogger.logConf.Compress
-
-	globalLogger.output = fileLogger
+func (l *LogsLogger) initFileLog(logFilePath string) error {
 	// 重新初始化所有日志器
-	initLoggers(fileLogger)
+	err := l.initLoggers(&lumberjack.Logger{
+		Filename:   logFilePath,
+		MaxSize:    l.logConf.MaxSize,
+		MaxBackups: l.logConf.MaxBackups,
+		MaxAge:     l.logConf.KeepDays,
+		Compress:   l.logConf.Compress,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to initialize file logger: %v", err)
+	}
+	return nil
 }
 
-// initMultiWriter 初始化同时输出到控制台和文件的日志器
-func initMultiWriter(logFilePath string) {
-
-	if fileLogger == nil {
-		fileLogger = &lumberjack.Logger{}
-	}
-	fileLogger.Filename = logFilePath
-	fileLogger.MaxSize = globalLogger.logConf.MaxSize
-	fileLogger.MaxBackups = globalLogger.logConf.MaxBackups
-	fileLogger.MaxAge = globalLogger.logConf.KeepDays
-	fileLogger.Compress = globalLogger.logConf.Compress
-
+func (l *LogsLogger) initMultiWriter(logFilePath string) error {
 	// 创建一个同时写入控制台和文件的 Writer
-	multiWriter := io.MultiWriter(os.Stdout, fileLogger)
+	multiWriter := io.MultiWriter(os.Stdout, &lumberjack.Logger{
+		Filename:   logFilePath,
+		MaxSize:    l.logConf.MaxSize,
+		MaxBackups: l.logConf.MaxBackups,
+		MaxAge:     l.logConf.KeepDays,
+		Compress:   l.logConf.Compress,
+	})
 
-	globalLogger.output = multiWriter
 	// 重新初始化所有日志器
-	initLoggers(multiWriter)
+	err := l.initLoggers(multiWriter)
+	if err != nil {
+		return fmt.Errorf("failed to initialize multi writer: %v", err)
+	}
+	return nil
 }
 
-// 设置方法 -----------------------------------------------------------------------
-// SetUp 初始化日志记录器
-func SetUp(logConf LogConf) error {
-	mu.Lock()
-	defer mu.Unlock()
+// 依据logConf和默认配置初始化日志器LogsLogger
+func (l *LogsLogger) Setup(logConf LogConf) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 
 	// 检查日志配置是否有效
 	if logConf.Mode == "" {
@@ -107,13 +115,39 @@ func SetUp(logConf LogConf) error {
 		logConf.Path = defaultLogConf.Path
 	}
 
-	globalLogger.logConf = logConf
-	globalLogger.logFlags = LogFlagsCommon
-	globalLogger.hasRootFilePrefix = false
-	globalLogger.logWriteStrategy = LoggingSync
+	l.logConf = logConf
+	l.logFlags = LogFlagsCommon
+	l.hasRootFilePrefix = false
+	l.logWriteStrategy = LoggingSync // 默认同步模式
 
-	if globalLogger.logConf.Mode == "file" || globalLogger.logConf.Mode == "both" {
-		if globalLogger.logConf.Path == "" {
+	l.logChan = make(chan *logItem, defaultLogChanSize)
+	l.shutdownChan = make(chan struct{})
+	l.itemPool = sync.Pool{
+		New: func() interface{} {
+			return &logItem{}
+		},
+	}
+	// 初始化批量处理
+	l.batchBuffer = make([][]byte, 0, batchSize)
+	l.batchTicker = time.NewTicker(flushInterval)
+	l.bufferPool = sync.Pool{
+		New: func() interface{} {
+			return new(bytes.Buffer)
+		},
+	}
+	// 重置l.closed和l.closeOnce
+	if atomic.LoadInt32(&l.closed) == 1 {
+		l.closeOnce = sync.Once{}
+		atomic.StoreInt32(&l.closed, 0)
+	}
+
+	for i := 0; i < workerCount; i++ {
+		l.wg.Add(1)
+		go l.worker()
+	}
+
+	if l.logConf.Mode == "file" || l.logConf.Mode == "both" {
+		if l.logConf.Path == "" {
 			return errors.New("log path is required")
 		}
 	}
@@ -121,9 +155,9 @@ func SetUp(logConf LogConf) error {
 	// 设置编码
 	switch logConf.Encoding {
 	case LogEncodingPlain:
-		globalLogger.encoder = &PlainEncoder{}
+		l.encoder = &PlainEncoder{}
 	case LogEncodingJSON:
-		globalLogger.encoder = &JsonEncoder{}
+		l.encoder = &JsonEncoder{}
 	default:
 		return fmt.Errorf("unsupported log encoding: %s", logConf.Encoding)
 	}
@@ -132,8 +166,6 @@ func SetUp(logConf LogConf) error {
 	if LogLevel(logConf.Level) < LogLevelDebug {
 		return errors.New("invalid log level")
 	}
-
-	// currentLogLevel = LogLevel(logConf.Level)
 
 	// 获取项目根目录
 	projectRootOnce.Do(func() {
@@ -144,72 +176,65 @@ func SetUp(logConf LogConf) error {
 		}
 	})
 
-	// 初始化输出
-	switch globalLogger.logConf.Mode {
-	case "file":
-		initFileLog(globalLogger.logConf.Path)
-	case "both":
-		initMultiWriter(globalLogger.logConf.Path)
-	default:
-		initLoggers(os.Stdout)
-	}
+	var err error = nil
 
+	// 初始化输出
+	switch l.logConf.Mode {
+	case "file":
+		err = l.initFileLog(l.logConf.Path)
+	case "both":
+		err = l.initMultiWriter(l.logConf.Path)
+	default:
+		err = l.initLoggers(os.Stdout)
+	}
+	if err != nil {
+		return fmt.Errorf("failed to set up logger: %v", err)
+	}
 	return nil
 }
 
-// DefaultLogConf 返回一个带有默认配置的 LogConf 实例
-func DefaultLogConf() LogConf {
-	return defaultLogConf
-}
-
 // SetupDefault 使用默认配置初始化日志记录器
-func SetupDefault() error {
-	err := SetUp(defaultLogConf)
+func (l *LogsLogger) SetupDefault() error {
+	err := l.Setup(defaultLogConf)
 	if err != nil {
 		return fmt.Errorf("failed to set up default logger: %v", err)
 	}
 	return nil
 }
 
-// 判断是否是标准输出/错误流
-func isStdStream(w io.Writer) bool {
-	if w == os.Stdout || w == os.Stderr || w == io.Discard {
-		return true
-	}
-
-	if f, ok := w.(*os.File); ok {
-		return f == os.Stdout || f == os.Stderr
-	}
-
-	return false
-}
-
 // SetOutput 设置日志输出位置，自动更新Mode
-func SetOutput(writer io.Writer) error {
-	mu2.Lock()
-	defer mu2.Unlock()
+func (l *LogsLogger) SetOutput(writer io.Writer) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 
 	if writer == nil {
 		return errors.New("writer cannot be nil")
 	}
 
-	globalLogger.output = writer
-
 	mode := LogModeConsole
+	var path string
 
 	switch w := writer.(type) {
 	case *os.File:
 		// 文件输出
 		if w.Name() == os.DevNull {
 			mode = LogModeConsole // 特殊情况： /dev/null，仍视为console
-			fmt.Println("console0")
 		} else if isStdStream(w) {
 			mode = LogModeConsole
-			fmt.Println("console1")
 		} else {
 			mode = LogModeFile
-			globalLogger.logConf.Path = w.Name()
+			path = w.Name()
+			writer = &lumberjack.Logger{
+				Filename:   path,
+				MaxSize:    l.logConf.MaxSize,
+				MaxBackups: l.logConf.MaxBackups,
+				MaxAge:     l.logConf.KeepDays,
+				Compress:   l.logConf.Compress,
+			}
 		}
+	case *lumberjack.Logger:
+		mode = LogModeFile
+		path = w.Filename
 	default:
 		// 尝试使用反射来检查是否为MultiWriter
 		writerVal := reflect.ValueOf(writer)
@@ -221,48 +246,47 @@ func SetOutput(writer io.Writer) error {
 				for _, wr := range mw.Writers() {
 					if f, ok := wr.(*os.File); ok && !isStdStream(f) {
 						hasFile = true
-						globalLogger.logConf.Path = f.Name()
+						path = f.Name()
 					} else if isStdStream(wr) {
 						hasConsole = true
-						fmt.Println("console2")
+					} else if lj, ok := wr.(*lumberjack.Logger); ok {
+						hasFile = true
+						path = lj.Filename
 					}
 				}
-
 				if hasFile && hasConsole {
 					mode = LogModeBoth
 				} else if hasFile {
 					mode = LogModeFile
-					fmt.Println("file")
 				} else {
 					mode = LogModeConsole
-					fmt.Println("console3")
 				}
-			} else {
-
 			}
+		} else {
+			fmt.Println("未知的writer类型，默认为console")
 		}
-
 	}
 
-	fmt.Println("mode：", mode)
-	globalLogger.logConf.Mode = mode
-	initLoggers(globalLogger.output)
+	l.output = writer
+	l.logConf.Mode = mode
+	l.logConf.Path = path
+	l.initLoggers(l.output)
 
 	return nil
 }
 
 // 设置编码
-func SetEncoding(encoding string) error {
+func (l *LogsLogger) SetEncoding(encoding string) error {
 	// LogEncodingJSON、LOgEncodingPlain
-	mu.Lock()
-	defer mu.Unlock()
-	globalLogger.logConf.Encoding = encoding
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.logConf.Encoding = encoding
 
 	switch encoding {
 	case LogEncodingPlain:
-		globalLogger.encoder = &PlainEncoder{}
+		l.encoder = &PlainEncoder{}
 	case LogEncodingJSON:
-		globalLogger.encoder = &JsonEncoder{}
+		l.encoder = &JsonEncoder{}
 	default:
 		return fmt.Errorf("unsupported log encoding: %s", encoding)
 	}
@@ -270,63 +294,79 @@ func SetEncoding(encoding string) error {
 }
 
 // 设置日志文件最大大小
-func SetMaxSize(maxSize int) {
-	mu.Lock()
-	defer mu.Unlock()
-	globalLogger.logConf.MaxSize = maxSize
+func (l *LogsLogger) SetMaxSize(maxSize int) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.logConf.MaxSize = maxSize
 
+	var err error = nil
 	// 重新初始化日志器以应用新设置
-	if globalLogger.logConf.Mode == "file" {
-		initFileLog(globalLogger.logConf.Path)
-	} else if globalLogger.logConf.Mode == "both" {
-		initMultiWriter(globalLogger.logConf.Path)
+	if l.logConf.Mode == "file" {
+		err = l.initFileLog(l.logConf.Path)
+	} else if l.logConf.Mode == "both" {
+		err = l.initMultiWriter(l.logConf.Path)
 	}
+
+	if err != nil {
+		return fmt.Errorf("failed to set max size: %v", err)
+	}
+	return nil
 }
 
 // 设置日志文件最大保留天数
-func SetMaxAge(maxAge int) {
-	mu.Lock()
-	defer mu.Unlock()
-	globalLogger.logConf.KeepDays = maxAge
+func (l *LogsLogger) SetMaxAge(maxAge int) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.logConf.KeepDays = maxAge
 
+	var err error = nil
 	// 重新初始化日志器以应用新设置
-	if globalLogger.logConf.Mode == "file" {
-		initFileLog(globalLogger.logConf.Path)
-	} else if globalLogger.logConf.Mode == "both" {
-		initMultiWriter(globalLogger.logConf.Path)
+	if l.logConf.Mode == "file" {
+		err = l.initFileLog(l.logConf.Path)
+	} else if l.logConf.Mode == "both" {
+		err = l.initMultiWriter(l.logConf.Path)
 	}
+	if err != nil {
+		return fmt.Errorf("failed to set max age: %v", err)
+	}
+	return nil
 }
 
 // 设置日志文件最大保留数量
-func SetMaxBackups(maxBackups int) {
-	mu.Lock()
-	defer mu.Unlock()
-	globalLogger.logConf.MaxBackups = maxBackups
+func (l *LogsLogger) SetMaxBackups(maxBackups int) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.logConf.MaxBackups = maxBackups
 
-	if globalLogger.logConf.Mode == "file" {
-		initFileLog(globalLogger.logConf.Path)
-	} else if globalLogger.logConf.Mode == "both" {
-		initMultiWriter(globalLogger.logConf.Path)
+	var err error = nil
+	// 重新初始化日志器以应用新设置
+	if l.logConf.Mode == "file" {
+		err = l.initFileLog(l.logConf.Path)
+	} else if l.logConf.Mode == "both" {
+		err = l.initMultiWriter(l.logConf.Path)
 	}
+	if err != nil {
+		return fmt.Errorf("failed to set max backups: %v", err)
+	}
+	return nil
 }
 
-// 设置日志级别
-func SetLogLevel(level LogLevel) error {
-	mu.Lock()
-	defer mu.Unlock()
+func (l *LogsLogger) SetLogLevel(level LogLevel) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 
-	if level < LogLevelDebug || level > LogLevelPanic {
+	if level < LogLevelDebug {
 		return errors.New("invalid log level")
 	}
 
-	globalLogger.logConf.Level = int(level)
+	l.logConf.Level = int(level)
 	return nil
 }
 
 // 设置标志
-func SetFlags(flags int) error {
-	mu.Lock()
-	defer mu.Unlock()
+func (l *LogsLogger) SetFlags(flags int) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 
 	// 对flags的合法性进行检查
 	// 检查是否设置了无效的标志
@@ -343,7 +383,7 @@ func SetFlags(flags int) error {
 
 	// 检查是否设置了 Lrootfile 标志
 	if flags&Lrootfile != 0 {
-		globalLogger.hasRootFilePrefix = true
+		l.hasRootFilePrefix = true
 		flags = flags &^ Lrootfile // 移除 Lrootfile 标志
 
 		// 检查并移除 Lshortfile 和 Llongfile，避免重复输出
@@ -355,115 +395,115 @@ func SetFlags(flags int) error {
 		}
 	}
 
-	globalLogger.logFlags = flags
+	l.logFlags = flags
 
-	globalLogger.debugL.SetFlags(flags)
-	globalLogger.infoL.SetFlags(flags)
-	globalLogger.warnL.SetFlags(flags)
-	globalLogger.errorL.SetFlags(flags)
-	globalLogger.fatalL.SetFlags(flags)
-	globalLogger.panicL.SetFlags(flags)
+	l.debugL.SetFlags(flags)
+	l.infoL.SetFlags(flags)
+	l.warnL.SetFlags(flags)
+	l.errorL.SetFlags(flags)
+	l.fatalL.SetFlags(flags)
+	l.panicL.SetFlags(flags)
 	return nil
 }
 
 // 设置日志同步还是异步
-func SetLogWriteStrategy(strategy logWriteStrategy) {
-	mu.Lock()
-	defer mu.Unlock()
-	globalLogger.logWriteStrategy = strategy
+func (l *LogsLogger) SetLogWriteStrategy(strategy logWriteStrategy) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.logWriteStrategy = strategy
 }
 
 // 设置前缀
-func SetPrefix(prefix string) {
-	mu.Lock()
-	defer mu.Unlock()
-	globalLogger.debugL.SetPrefix("[DEBUG] " + prefix)
-	globalLogger.infoL.SetPrefix("[INFO] " + prefix)
-	globalLogger.warnL.SetPrefix("[WARN] " + prefix)
-	globalLogger.errorL.SetPrefix("[ERROR] " + prefix)
-	globalLogger.fatalL.SetPrefix("[FATAL] " + prefix)
-	globalLogger.panicL.SetPrefix("[PANIC] " + prefix)
+func (l *LogsLogger) SetPrefix(prefix string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.debugL.SetPrefix("[DEBUG] " + prefix)
+	l.infoL.SetPrefix("[INFO] " + prefix)
+	l.warnL.SetPrefix("[WARN] " + prefix)
+	l.errorL.SetPrefix("[ERROR] " + prefix)
+	l.fatalL.SetPrefix("[FATAL] " + prefix)
+	l.panicL.SetPrefix("[PANIC] " + prefix)
 }
 
-func SetDebugPrefixWithoutDefaultPrefix(prefix string) {
-	mu.Lock()
-	defer mu.Unlock()
-	globalLogger.debugL.SetPrefix(prefix)
+func (l *LogsLogger) SetDebugPrefixWithoutDefaultPrefix(prefix string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.debugL.SetPrefix(prefix)
 }
 
-func SetDebugPrefix(prefix string) {
-	mu.Lock()
-	defer mu.Unlock()
-	globalLogger.debugL.SetPrefix("[DEBUG] " + prefix)
+func (l *LogsLogger) SetDebugPrefix(prefix string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.debugL.SetPrefix("[DEBUG] " + prefix)
 }
 
-func SetInfoPrefixWithoutDefaultPrefix(prefix string) {
-	mu.Lock()
-	defer mu.Unlock()
-	globalLogger.infoL.SetPrefix(prefix)
+func (l *LogsLogger) SetInfoPrefixWithoutDefaultPrefix(prefix string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.infoL.SetPrefix(prefix)
 }
 
-func SetInfoPrefix(prefix string) {
-	mu.Lock()
-	defer mu.Unlock()
-	globalLogger.infoL.SetPrefix("[INFO] " + prefix)
+func (l *LogsLogger) SetInfoPrefix(prefix string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.infoL.SetPrefix("[INFO] " + prefix)
 }
 
-func SetWarnPrefixWithoutDefaultPrefix(prefix string) {
-	mu.Lock()
-	defer mu.Unlock()
-	globalLogger.warnL.SetPrefix(prefix)
+func (l *LogsLogger) SetWarnPrefixWithoutDefaultPrefix(prefix string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.warnL.SetPrefix(prefix)
 }
 
-func SetWarnPrefix(prefix string) {
-	mu.Lock()
-	defer mu.Unlock()
-	globalLogger.warnL.SetPrefix("[WARN] " + prefix)
+func (l *LogsLogger) SetWarnPrefix(prefix string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.warnL.SetPrefix("[WARN] " + prefix)
 }
 
-func SetErrorPrefixWithoutDefaultPrefix(prefix string) {
-	mu.Lock()
-	defer mu.Unlock()
-	globalLogger.errorL.SetPrefix(prefix)
+func (l *LogsLogger) SetErrorPrefixWithoutDefaultPrefix(prefix string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.errorL.SetPrefix(prefix)
 }
 
-func SetErrorPrefix(prefix string) {
-	mu.Lock()
-	defer mu.Unlock()
-	globalLogger.errorL.SetPrefix("[ERROR] " + prefix)
+func (l *LogsLogger) SetErrorPrefix(prefix string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.errorL.SetPrefix("[ERROR] " + prefix)
 }
 
-func SetFatalPrefixWithoutDefaultPrefix(prefix string) {
-	mu.Lock()
-	defer mu.Unlock()
-	globalLogger.fatalL.SetPrefix(prefix)
+func (l *LogsLogger) SetFatalPrefixWithoutDefaultPrefix(prefix string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.fatalL.SetPrefix(prefix)
 }
 
-func SetFatalPrefix(prefix string) {
-	mu.Lock()
-	defer mu.Unlock()
-	globalLogger.fatalL.SetPrefix("[FATAL] " + prefix)
+func (l *LogsLogger) SetFatalPrefix(prefix string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.fatalL.SetPrefix("[FATAL] " + prefix)
 }
 
-func SetPanicPrefixWithoutDefaultPrefix(prefix string) {
-	mu.Lock()
-	defer mu.Unlock()
-	globalLogger.panicL.SetPrefix(prefix)
+func (l *LogsLogger) SetPanicPrefixWithoutDefaultPrefix(prefix string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.panicL.SetPrefix(prefix)
 }
 
-func SetPanicPrefix(prefix string) {
-	mu.Lock()
-	defer mu.Unlock()
-	globalLogger.panicL.SetPrefix("[PANIC] " + prefix)
+func (l *LogsLogger) SetPanicPrefix(prefix string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.panicL.SetPrefix("[PANIC] " + prefix)
 }
 
-func SetPrefixWithoutDefaultPrefix(prefix string) {
-	mu.Lock()
-	defer mu.Unlock()
-	globalLogger.debugL.SetPrefix(prefix)
-	globalLogger.infoL.SetPrefix(prefix)
-	globalLogger.warnL.SetPrefix(prefix)
-	globalLogger.errorL.SetPrefix(prefix)
-	globalLogger.fatalL.SetPrefix(prefix)
-	globalLogger.panicL.SetPrefix(prefix)
+func (l *LogsLogger) SetPrefixWithoutDefaultPrefix(prefix string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.debugL.SetPrefix(prefix)
+	l.infoL.SetPrefix(prefix)
+	l.warnL.SetPrefix(prefix)
+	l.errorL.SetPrefix(prefix)
+	l.fatalL.SetPrefix(prefix)
+	l.panicL.SetPrefix(prefix)
 }

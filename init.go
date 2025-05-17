@@ -1,34 +1,20 @@
 package logs
 
-import "fmt"
+import (
+	"fmt"
+)
 
-func init() {
-	if err := SetUp(defaultLogConf); err != nil {
-		fmt.Printf("Failed to initialize logger: %v", err)
-	}
-
-	logChan = make(chan logItem, defaultLogChanSize)
-	shutdownChan = make(chan struct{})
-
-	initWorkerOnce.Do(func() {
-		wg.Add(1)
-		go worker()
-	})
+func (i *logItem) Reset() {
+	i.logger = nil
+	i.level = 0
+	i.msg = ""
+	i.skip = 0
 }
 
-func worker() {
-	defer wg.Done()
-
-	for {
-		select {
-		case item, ok := <- logChan:
-			if !ok {
-				return // channel已关闭，退出
-			}
-			internalLogger := getLoggerByLevel(item.logger, item.level)
-			internalLogger.Output(item.skip, item.msg)
-		case <-shutdownChan:
-			return // 接收到关闭信号，退出循环
-		}
+func init() {
+	// fmt.Println("初始化日志器")
+	if err := globalLogger.Setup(defaultLogConf); err != nil {
+		fmt.Printf("Failed to initialize logger: %v", err)
 	}
+	// fmt.Println("初始化日志器完成")
 }
